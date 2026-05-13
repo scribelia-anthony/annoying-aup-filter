@@ -26,8 +26,9 @@ func main() {
 	store := NewStore(*maxCaptures)
 	rules := NewRules()
 	interceptor := NewInterceptor()
+	fallback := NewFallback()
 
-	proxy, err := NewProxy(*upstream, store, rules, interceptor)
+	proxy, err := NewProxy(*upstream, store, rules, interceptor, fallback)
 	if err != nil {
 		log.Fatalf("invalid upstream URL: %v", err)
 	}
@@ -40,7 +41,7 @@ func main() {
 	}
 
 	uiMux := http.NewServeMux()
-	api := NewAPI(store, rules, interceptor, proxy)
+	api := NewAPI(store, rules, interceptor, fallback, proxy)
 	api.ProxyAddr = *proxyAddr
 	api.RegisterRoutes(uiMux)
 	sub, err := fs.Sub(staticFS, "static")

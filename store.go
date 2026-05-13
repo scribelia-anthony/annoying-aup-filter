@@ -18,6 +18,7 @@ const (
 	StatusCompleted   CaptureStatus = "completed"
 	StatusDropped     CaptureStatus = "dropped"
 	StatusErrored     CaptureStatus = "errored"
+	StatusAUPRefused  CaptureStatus = "aup_refused"
 )
 
 type CapturedRequest struct {
@@ -53,6 +54,8 @@ type Capture struct {
 	Error      string            `json:"error,omitempty"`
 	Modified   bool              `json:"modified"`
 	ReplayOf   string            `json:"replay_of,omitempty"`
+	FallbackOf string            `json:"fallback_of,omitempty"`
+	FallbackTo string            `json:"fallback_to,omitempty"`
 	Note       string            `json:"note,omitempty"`
 }
 

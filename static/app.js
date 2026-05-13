@@ -48,6 +48,31 @@ const fmtBytes = (n) => {
   if (n < 1024*1024) return (n/1024).toFixed(1) + 'KB';
   return (n/1024/1024).toFixed(1) + 'MB';
 };
+// Try to extract the model name from a captured request body (parsed JSON).
+function modelOfCapture(cap) {
+  const body = cap.request?.body;
+  if (!body) return '';
+  try {
+    const parsed = JSON.parse(body);
+    return parsed.model || '';
+  } catch { return ''; }
+}
+
+// Make the path display useful. /v1/messages is the same for ~everything;
+// show endpoint + a short hint when the body is a Messages request.
+function summarizePath(cap) {
+  const p = cap.request?.path || cap.request?.url || '?';
+  return p.replace(/^\/v1\//, '/');
+}
+
+const shortModel = (m) => {
+  if (!m) return '';
+  // claude-sonnet-4-6 → Sonnet 4.6 ; claude-opus-4-7 → Opus 4.7
+  const match = m.match(/^claude-(opus|sonnet|haiku)-?(\d+)-?(\d+)?/);
+  if (!match) return m.replace(/^claude-/, '');
+  const fam = match[1].charAt(0).toUpperCase() + match[1].slice(1);
+  return `${fam} ${match[2]}${match[3] ? '.' + match[3] : ''}`;
+};
 
 const toast = (msg, kind = '') => {
   const t = el('div', { class: 'toast ' + kind }, msg);
@@ -501,6 +526,8 @@ function connect() {
     state.intercept = !!snap.intercept;
     state.rules = snap.rules || [];
     state.upstream = snap.upstream || '';
+    state.fallback = !!snap.fallback;
+    state.fallbackModel = snap.fallback_model || 'claude-sonnet-4-6';
     const proxyUrl = $('empty-proxy-url');
     if (proxyUrl) {
       proxyUrl.textContent = snap.proxy_addr ? `http://${snap.proxy_addr}` : 'http://127.0.0.1:8080';
@@ -571,6 +598,12 @@ function handleEvent(ev) {
       state.intercept = ev.payload?.enabled ?? state.intercept;
       $('intercept-toggle').checked = state.intercept;
       break;
+    case 'fallback_toggled':
+      state.fallback = ev.payload?.enabled ?? state.fallback;
+      state.fallbackModel = ev.payload?.model ?? state.fallbackModel;
+      $('fallback-toggle').checked = state.fallback;
+      $('fallback-model-label').textContent = shortModel(state.fallbackModel);
+      break;
     case 'rules_updated':
       state.rules = ev.payload || [];
       $('rules-count').textContent = state.rules.filter(r => r.enabled).length;
@@ -582,6 +615,8 @@ function handleEvent(ev) {
 function renderAll() {
   $('upstream').textContent = `— upstream: ${state.upstream}`;
   $('intercept-toggle').checked = state.intercept;
+  $('fallback-toggle').checked = !!state.fallback;
+  $('fallback-model-label').textContent = shortModel(state.fallbackModel || 'claude-sonnet-4-6');
   $('rules-count').textContent = (state.rules || []).filter(r => r.enabled).length;
   $('captures').innerHTML = '';
   for (let i = state.order.length - 1; i >= 0; i--) {
@@ -629,15 +664,35 @@ function renderListItem(cap) {
   if (state.selectedId === cap.id) li.classList.add('selected');
   if (cap.modified) li.classList.add('modified');
   if (cap.replay_of) li.classList.add('replay');
+  if (cap.status === 'aup_refused') li.classList.add('aup-refused');
+  // fallback-saved only colors orange if the fallback actually returned 2xx
+  if (cap.fallback_of) {
+    const ok = (cap.response && cap.response.status >= 200 && cap.response.status < 300);
+    li.classList.add(ok ? 'fallback-saved' : 'fallback-failed');
+  }
 
   const method = cap.request?.method || '?';
   const path = cap.request?.path || cap.request?.url || '?';
   const status = cap.response?.status ? String(cap.response.status) : (cap.status || '—');
 
+  // Top line: method + path + short status
   li.appendChild(el('span', { class: 'method' }, method));
-  li.appendChild(el('span', { class: 'path', title: path }, path));
-  li.appendChild(el('span', { class: 'meta st-' + (cap.status || 'pending') },
-    cap.response?.status ? `${status} · ${fmtMs(cap.duration_ms)}` : cap.status));
+  li.appendChild(el('span', { class: 'path', title: path }, summarizePath(cap)));
+
+  let metaTop;
+  if (cap.status === 'aup_refused')    metaTop = 'AUP';
+  else if (cap.fallback_of)            metaTop = (cap.response?.status >= 200 && cap.response?.status < 300) ? `⤴ ${status}` : `⤴ ${status}`;
+  else if (cap.response?.status)        metaTop = status;
+  else                                  metaTop = cap.status?.slice(0,4) || '—';
+  li.appendChild(el('span', { class: 'meta st-' + (cap.status || 'pending') }, metaTop));
+
+  // Sub line: model/duration/markers — only if useful
+  const subParts = [];
+  if (cap.duration_ms != null && cap.duration_ms > 0) subParts.push(fmtMs(cap.duration_ms));
+  const m = modelOfCapture(cap);
+  if (m) subParts.push(shortModel(m));
+  if (cap.modified) subParts.push('✎ modified');
+  if (subParts.length) li.appendChild(el('span', { class: 'sub' }, subParts.join(' · ')));
 
   if (!existing) {
     const list = $('captures');
@@ -669,10 +724,12 @@ function renderDetail(cap) {
     cap.duration_ms ? `· ${fmtMs(cap.duration_ms)}` : '',
     cap.modified ? '· ✎ modified' : '',
     cap.replay_of ? `· ↻ replay of ${cap.replay_of}` : '',
+    cap.fallback_of ? `· ⤴ fallback of ${cap.fallback_of}` : '',
+    cap.fallback_to ? `· → fallback to ${cap.fallback_to}` : '',
   ].filter(Boolean).join(' ');
 
   $('req-line').textContent = `${cap.request?.method || ''} ${cap.request?.url || ''}`;
-  renderHeaders($('req-headers'), cap.request?.headers || {});
+  renderHeaders($('req-headers'), cap.request?.headers || {}, 'req');
   $('req-headers-count').textContent = `(${Object.keys(cap.request?.headers || {}).length})`;
   const reqBody = cap.request?.body || '';
   $('req-body-info').textContent = reqBody ? `(${fmtBytes(reqBody.length)})` : '(empty)';
@@ -682,7 +739,7 @@ function renderDetail(cap) {
   $('resp-line').textContent = cap.response
     ? `${cap.response.status}${cap.response.streaming ? ' · streaming SSE' : ''}`
     : (cap.error ? 'ERROR: ' + cap.error : '(no response yet)');
-  renderHeaders($('resp-headers'), cap.response?.headers || {});
+  renderHeaders($('resp-headers'), cap.response?.headers || {}, 'resp');
   $('resp-headers-count').textContent = `(${Object.keys(cap.response?.headers || {}).length})`;
   const respBody = cap.response?.body || (cap.response?.chunks || []).map(c => c.data).join('');
   $('resp-body-info').textContent = respBody ? `(${fmtBytes(respBody.length)}${cap.response?.streaming ? ', SSE' : ''})` : '(none)';
@@ -705,15 +762,74 @@ function appendStreamChunk(chunk) {
   }
 }
 
-function renderHeaders(tbl, headers) {
+// Headers we consider noise by default — SDK plumbing, transport metadata.
+// User can toggle to show them with "show all".
+const NOISY_HEADERS = new Set([
+  'accept', 'accept-encoding', 'connection', 'content-encoding',
+  'content-length', 'content-type', 'cache-control',
+  'cf-cache-status', 'cf-ray',
+  'date', 'server', 'strict-transport-security', 'via', 'vary',
+  'x-app', 'x-claude-code-session-id',
+  'x-stainless-arch', 'x-stainless-lang', 'x-stainless-os',
+  'x-stainless-package-version', 'x-stainless-retry-count',
+  'x-stainless-runtime', 'x-stainless-runtime-version',
+  'x-stainless-timeout',
+  'x-robots-tag', 'x-should-retry',
+  'set-cookie',
+  'anthropic-dangerous-direct-browser-access',
+  'user-agent',
+]);
+const SECRET_HEADERS = new Set(['authorization', 'x-api-key', 'cookie']);
+
+// per-pane reveal toggles
+const headerState = { req: { showAll: false, reveal: false }, resp: { showAll: false, reveal: false } };
+
+function renderHeaders(tbl, headers, paneKey) {
+  const wrap = tbl.parentElement; // host element where we render controls
   tbl.innerHTML = '';
-  const names = Object.keys(headers).sort();
-  for (const k of names) {
+
+  const allNames = Object.keys(headers).sort();
+  const showAll = headerState[paneKey]?.showAll;
+  const reveal = headerState[paneKey]?.reveal;
+  const filtered = allNames.filter(k => showAll || !NOISY_HEADERS.has(k.toLowerCase()));
+  const hiddenCount = allNames.length - filtered.length;
+
+  // Inject control row at top of the section if not already there
+  const controlsId = paneKey + '-headers-controls';
+  let controls = document.getElementById(controlsId);
+  if (!controls) {
+    controls = el('div', { class: 'header-controls', id: controlsId });
+    tbl.parentElement.insertBefore(controls, tbl);
+  }
+  controls.innerHTML = '';
+  controls.appendChild(el('button', {
+    class: 'btn-tiny',
+    onclick: () => { headerState[paneKey].showAll = !headerState[paneKey].showAll; renderHeaders(tbl, headers, paneKey); },
+  }, showAll ? `Hide ${hiddenCount} noisy` : (hiddenCount > 0 ? `Show all (+${hiddenCount})` : 'No hidden')));
+  if (allNames.some(n => SECRET_HEADERS.has(n.toLowerCase()))) {
+    controls.appendChild(el('button', {
+      class: 'btn-tiny',
+      onclick: () => { headerState[paneKey].reveal = !headerState[paneKey].reveal; renderHeaders(tbl, headers, paneKey); },
+    }, reveal ? '🔒 Hide secrets' : '👁 Reveal secrets'));
+  }
+
+  for (const k of filtered) {
     const vs = headers[k] || [];
+    const isSecret = SECRET_HEADERS.has(k.toLowerCase());
     for (const v of vs) {
-      tbl.appendChild(el('tr', {}, el('td', { class: 'k' }, k), el('td', { class: 'v' }, v)));
+      const displayed = (isSecret && !reveal) ? redact(v) : v;
+      const cls = isSecret && !reveal ? 'v secret' : 'v';
+      tbl.appendChild(el('tr', {}, el('td', { class: 'k' }, k), el('td', { class: cls }, displayed)));
     }
   }
+}
+
+function redact(v) {
+  if (!v) return v;
+  // Bearer xxxxx or sk-xxxxx — show prefix + ***
+  const m = v.match(/^(Bearer\s+)?(\S{4,8})/);
+  if (m) return `${m[1] || ''}${m[2]}…[redacted]`;
+  return '[redacted]';
 }
 
 // ─── Detail tabs ───────────────────────────────────────────────────
@@ -736,6 +852,21 @@ $('intercept-toggle').addEventListener('change', async () => {
     body: JSON.stringify({ enabled }),
   });
   state.intercept = enabled;
+});
+
+$('fallback-toggle').addEventListener('change', async () => {
+  const enabled = $('fallback-toggle').checked;
+  const res = await fetch('/admin/fallback', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+  if (res.ok) {
+    const data = await res.json();
+    state.fallback = data.enabled;
+    state.fallbackModel = data.model;
+    toast(enabled ? `AUP fallback → ${shortModel(data.model)} ON` : 'AUP fallback OFF', 'ok');
+  }
 });
 
 $('clear-btn').addEventListener('click', async () => {
