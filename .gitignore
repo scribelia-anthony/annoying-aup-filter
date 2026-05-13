@@ -1,7 +1,14 @@
 # Compiled binary
 /prompt-cleaner
+/dist/
 
-# Editor/IDE
+# Test artefacts
+*.test
+*.out
+coverage.out
+coverage.html
+
+# Editor / IDE
 .vscode/
 .idea/
 *.swp
@@ -10,11 +17,14 @@
 # OS
 .DS_Store
 
-# Go
-*.test
-*.out
-
-# Local rules and config — keep these per-user, never committed
+# Local rules and config — per-user, never committed
 rules.json
 rules.local.json
 *.local.json
+
+# Tooling caches
+.openclaude/
+.claude/
+
+# Goreleaser snapshot artefacts
+dist/
