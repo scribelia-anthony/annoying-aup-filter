@@ -65,6 +65,15 @@ function summarizePath(cap) {
   return p.replace(/^\/v1\//, '/');
 }
 
+// HH:MM:SS local time, terse
+function fmtClock(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
 const shortModel = (m) => {
   if (!m) return '';
   // claude-sonnet-4-6 → Sonnet 4.6 ; claude-opus-4-7 → Opus 4.7
@@ -528,9 +537,9 @@ function connect() {
     state.upstream = snap.upstream || '';
     state.fallback = !!snap.fallback;
     state.fallbackModel = snap.fallback_model || 'claude-sonnet-4-6';
-    const proxyUrl = $('empty-proxy-url');
-    if (proxyUrl) {
-      proxyUrl.textContent = snap.proxy_addr ? `http://${snap.proxy_addr}` : 'http://127.0.0.1:8080';
+    const helpUrl = $('help-proxy-url');
+    if (helpUrl) {
+      helpUrl.textContent = snap.proxy_addr ? `http://${snap.proxy_addr}` : 'http://127.0.0.1:8080';
     }
     state.captures.clear();
     state.order = [];
@@ -686,12 +695,13 @@ function renderListItem(cap) {
   else                                  metaTop = cap.status?.slice(0,4) || '—';
   li.appendChild(el('span', { class: 'meta st-' + (cap.status || 'pending') }, metaTop));
 
-  // Sub line: model/duration/markers — only if useful
+  // Sub line: timestamp + model/duration/markers
   const subParts = [];
+  if (cap.started_at) subParts.push(fmtClock(cap.started_at));
   if (cap.duration_ms != null && cap.duration_ms > 0) subParts.push(fmtMs(cap.duration_ms));
   const m = modelOfCapture(cap);
   if (m) subParts.push(shortModel(m));
-  if (cap.modified) subParts.push('✎ modified');
+  if (cap.modified) subParts.push('✎');
   if (subParts.length) li.appendChild(el('span', { class: 'sub' }, subParts.join(' · ')));
 
   if (!existing) {
@@ -875,6 +885,9 @@ $('clear-btn').addEventListener('click', async () => {
 });
 
 $('rules-btn').addEventListener('click', openRulesModal);
+$('help-btn').addEventListener('click', () => { $('help-modal').hidden = false; });
+$('help-close').addEventListener('click', () => { $('help-modal').hidden = true; });
+$('empty-help').addEventListener('click', () => { $('help-modal').hidden = false; });
 $('replay-btn').addEventListener('click', () => {
   const cap = state.captures.get(state.selectedId);
   if (cap) openReplayModal(cap);
@@ -1120,7 +1133,8 @@ $('rules-save').addEventListener('click', async () => {
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
-    if (!$('rules-modal').hidden) $('rules-modal').hidden = true;
+    if (!$('help-modal').hidden) $('help-modal').hidden = true;
+    else if (!$('rules-modal').hidden) $('rules-modal').hidden = true;
     else if (!$('replay-modal').hidden) { $('replay-modal').hidden = true; rmEditor = null; }
   }
 });
