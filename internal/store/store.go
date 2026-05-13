@@ -1,8 +1,9 @@
-package main
+// Package store keeps every captured request/response in a bounded
+// in-memory ring buffer and broadcasts state changes to subscribers (the
+// SSE event stream consumed by the web UI).
+package store
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"sync"
 	"time"
@@ -75,19 +76,13 @@ type Store struct {
 	subs   map[chan Event]struct{}
 }
 
-func NewStore(max int) *Store {
+func New(max int) *Store {
 	return &Store{
 		captures: make(map[string]*Capture),
 		order:    make([]string, 0),
 		max:      max,
 		subs:     make(map[chan Event]struct{}),
 	}
-}
-
-func newID() string {
-	b := make([]byte, 6)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
 }
 
 func (s *Store) Add(c *Capture) {
@@ -130,8 +125,8 @@ func (s *Store) Snapshot(id string) (json.RawMessage, bool) {
 	return data, true
 }
 
+// Capture returns a decoded clone — modifying it never races with the store.
 func (s *Store) Capture(id string) (*Capture, bool) {
-	// Returns a JSON-decoded clone to avoid sharing the mutable pointer.
 	snap, ok := s.Snapshot(id)
 	if !ok {
 		return nil, false
@@ -161,8 +156,6 @@ func (s *Store) Clear() {
 	s.order = s.order[:0]
 }
 
-// --- Event broadcaster ---
-
 func (s *Store) Subscribe() chan Event {
 	ch := make(chan Event, 128)
 	s.subsMu.Lock()
@@ -187,7 +180,7 @@ func (s *Store) Broadcast(e Event) {
 		select {
 		case ch <- e:
 		default:
-			// subscriber too slow — drop the event for that client
+			// Subscriber too slow — drop the event for that client.
 		}
 	}
 }
