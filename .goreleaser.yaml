@@ -1,0 +1,105 @@
+version: 2
+
+project_name: prompt-cleaner
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: prompt-cleaner
+    main: ./cmd/prompt-cleaner
+    binary: prompt-cleaner
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .ShortCommit }}
+      - -X main.date={{ .Date }}
+
+archives:
+  - id: default
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+    format_overrides:
+      - goos: windows
+        formats: ["zip"]
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+
+dockers:
+  - image_templates:
+      - "ghcr.io/scribelia-anthony/prompt-cleaner:{{ .Version }}-amd64"
+      - "ghcr.io/scribelia-anthony/prompt-cleaner:latest-amd64"
+    use: buildx
+    goos: linux
+    goarch: amd64
+    dockerfile: Dockerfile.release
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.source=https://github.com/scribelia-anthony/prompt-cleaner"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.licenses=MIT"
+  - image_templates:
+      - "ghcr.io/scribelia-anthony/prompt-cleaner:{{ .Version }}-arm64"
+      - "ghcr.io/scribelia-anthony/prompt-cleaner:latest-arm64"
+    use: buildx
+    goos: linux
+    goarch: arm64
+    dockerfile: Dockerfile.release
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.source=https://github.com/scribelia-anthony/prompt-cleaner"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.licenses=MIT"
+
+docker_manifests:
+  - name_template: "ghcr.io/scribelia-anthony/prompt-cleaner:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/scribelia-anthony/prompt-cleaner:{{ .Version }}-amd64"
+      - "ghcr.io/scribelia-anthony/prompt-cleaner:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/scribelia-anthony/prompt-cleaner:latest"
+    image_templates:
+      - "ghcr.io/scribelia-anthony/prompt-cleaner:latest-amd64"
+      - "ghcr.io/scribelia-anthony/prompt-cleaner:latest-arm64"
+
+release:
+  draft: false
+  prerelease: auto
+  github:
+    owner: scribelia-anthony
+    name: prompt-cleaner
