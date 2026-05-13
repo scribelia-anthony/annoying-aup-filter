@@ -1,0 +1,8 @@
+# Used by goreleaser. The binary is built outside this Dockerfile and
+# copied in — keeping the image tiny and reproducible.
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY prompt-cleaner /usr/local/bin/prompt-cleaner
+EXPOSE 8080 8888
+USER nonroot:nonroot
+ENTRYPOINT ["/usr/local/bin/prompt-cleaner"]
+CMD ["-proxy-addr", "0.0.0.0:8080", "-ui-addr", "0.0.0.0:8888"]

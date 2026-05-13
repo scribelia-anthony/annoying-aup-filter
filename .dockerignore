@@ -1,0 +1,17 @@
+.git
+.github
+.idea
+.vscode
+.openclaude
+*.local.json
+rules.json
+rules.local.json
+coverage.out
+dist
+prompt-cleaner
+README.md
+CHANGELOG.md
+CONTRIBUTING.md
+SECURITY.md
+LICENSE
+docs
