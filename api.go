@@ -14,6 +14,7 @@ type API struct {
 	rules       *Rules
 	interceptor *Interceptor
 	proxy       *Proxy
+	ProxyAddr   string
 }
 
 func NewAPI(s *Store, r *Rules, i *Interceptor, p *Proxy) *API {
@@ -209,7 +210,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		"pending":    a.interceptor.Pending(),
 		"rules":      a.rules.List(),
 		"upstream":   a.proxy.upstream.String(),
-		"proxy_addr": "",
+		"proxy_addr": a.ProxyAddr,
 	})
 }
 
@@ -229,11 +230,12 @@ func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	// initial snapshot of state + captures
 	state := map[string]any{
-		"intercept": a.interceptor.Enabled(),
-		"pending":   a.interceptor.Pending(),
-		"rules":     a.rules.List(),
-		"captures":  json.RawMessage(a.store.SnapshotAll()),
-		"upstream":  a.proxy.upstream.String(),
+		"intercept":  a.interceptor.Enabled(),
+		"pending":    a.interceptor.Pending(),
+		"rules":      a.rules.List(),
+		"captures":   json.RawMessage(a.store.SnapshotAll()),
+		"upstream":   a.proxy.upstream.String(),
+		"proxy_addr": a.ProxyAddr,
 	}
 	statePayload, _ := json.Marshal(state)
 	fmt.Fprintf(w, "event: snapshot\ndata: %s\n\n", statePayload)
