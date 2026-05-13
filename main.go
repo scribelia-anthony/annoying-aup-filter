@@ -41,6 +41,7 @@ func main() {
 
 	uiMux := http.NewServeMux()
 	api := NewAPI(store, rules, interceptor, proxy)
+	api.ProxyAddr = *proxyAddr
 	api.RegisterRoutes(uiMux)
 	sub, err := fs.Sub(staticFS, "static")
 	if err != nil {

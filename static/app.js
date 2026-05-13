@@ -4,8 +4,8 @@
 
 // ─── State ──────────────────────────────────────────────────────────
 const state = {
-  captures: new Map(),       // id -> capture
-  order: [],                 // chronological (oldest -> newest); list renders reversed
+  captures: new Map(),
+  order: [],
   selectedId: null,
   intercept: false,
   rules: [],
@@ -16,16 +16,20 @@ const state = {
   interceptQueue: [],
 };
 
+let imEditor = null;
+let rmEditor = null;
+
 // ─── DOM helpers ────────────────────────────────────────────────────
 const $ = (id) => document.getElementById(id);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
     if (k === 'class') e.className = v;
     else if (k === 'data') for (const [dk, dv] of Object.entries(v)) e.dataset[dk] = dv;
     else if (k.startsWith('on') && typeof v === 'function') e.addEventListener(k.slice(2), v);
     else if (v === true) e.setAttribute(k, '');
-    else if (v != null && v !== false) e.setAttribute(k, v);
+    else e.setAttribute(k, v);
   }
   for (const kid of kids.flat()) {
     if (kid == null || kid === false) continue;
@@ -39,14 +43,10 @@ const fmtMs = (ms) => {
   if (ms < 1000) return ms + 'ms';
   return (ms / 1000).toFixed(1) + 's';
 };
-const fmtTimeAgo = (iso) => {
-  if (!iso) return '';
-  const d = new Date(iso);
-  const s = (Date.now() - d.getTime()) / 1000;
-  if (s < 1) return 'now';
-  if (s < 60) return Math.round(s) + 's';
-  if (s < 3600) return Math.round(s / 60) + 'm';
-  return Math.round(s / 3600) + 'h';
+const fmtBytes = (n) => {
+  if (n < 1024) return n + 'B';
+  if (n < 1024*1024) return (n/1024).toFixed(1) + 'KB';
+  return (n/1024/1024).toFixed(1) + 'MB';
 };
 
 const toast = (msg, kind = '') => {
@@ -62,12 +62,8 @@ function escapeHtml(s) {
 
 function tryPrettyJSON(s) {
   if (!s) return '';
-  try {
-    const parsed = JSON.parse(s);
-    return JSON.stringify(parsed, null, 2);
-  } catch {
-    return s;
-  }
+  try { return JSON.stringify(JSON.parse(s), null, 2); }
+  catch { return s; }
 }
 
 function highlightJSON(s) {
@@ -85,8 +81,7 @@ function highlightJSON(s) {
 
 function highlightSSE(s) {
   if (!s) return '';
-  const lines = s.split('\n');
-  return lines.map(line => {
+  return s.split('\n').map(line => {
     if (line.startsWith(':')) return `<span class="sse-comment">${escapeHtml(line)}</span>`;
     if (line.startsWith('event:')) return `<span class="sse-event-line">${escapeHtml(line)}</span>`;
     if (line.startsWith('data:')) {
@@ -100,6 +95,401 @@ function highlightSSE(s) {
   }).join('\n');
 }
 
+// ─── Structured body editor ─────────────────────────────────────────
+// Builds a structured editor for Anthropic Messages-style request bodies.
+// Returns { getBody(): string, isStructured: bool }.
+//
+// Mutates content blocks in place; `getBody()` re-serializes everything.
+// Falls back to a single raw textarea for non-Messages bodies.
+
+function createBodyEditor(hostId, bodyText, opts = {}) {
+  const host = (typeof hostId === 'string') ? $(hostId) : hostId;
+  host.innerHTML = '';
+  const readOnly = !!opts.readOnly;
+
+  let parsed = null;
+  try { parsed = JSON.parse(bodyText); } catch {}
+
+  if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.messages)) {
+    // Fallback: raw display/edit
+    const ta = el(readOnly ? 'pre' : 'textarea', {
+      class: readOnly ? 'code body' : 'raw-json-area',
+      rows: 24,
+    });
+    if (readOnly) {
+      ta.innerHTML = highlightJSON(tryPrettyJSON(bodyText));
+    } else {
+      ta.value = tryPrettyJSON(bodyText);
+    }
+    host.appendChild(ta);
+    return {
+      isStructured: false,
+      getBody: () => readOnly ? bodyText : ta.value,
+    };
+  }
+
+  // Deep-ish clone so edits don't mutate caller's parsed obj
+  const body = JSON.parse(JSON.stringify(parsed));
+
+  // ─── Meta row (model / max_tokens / stream / temperature) ───
+  const metaInputs = {};
+  const meta = el('div', { class: 'body-meta' },
+    el('label', {}, 'Model',
+      metaInputs.model = el('input', { type: 'text', value: body.model || '', disabled: readOnly ? true : undefined })),
+    el('label', {}, 'Max tokens',
+      metaInputs.max_tokens = el('input', { type: 'number', value: body.max_tokens ?? '', disabled: readOnly ? true : undefined })),
+    el('label', { class: 'inline' },
+      metaInputs.stream = el('input', { type: 'checkbox', checked: body.stream ? true : undefined, disabled: readOnly ? true : undefined }),
+      'Stream'),
+    el('label', {}, 'Temperature',
+      metaInputs.temperature = el('input', { type: 'number', step: '0.1', value: body.temperature ?? '', disabled: readOnly ? true : undefined })),
+  );
+  host.appendChild(meta);
+
+  // ─── System ───
+  const systemDetails = el('details', { class: 'collapsible', open: body.system != null ? true : undefined });
+  const systemSummary = el('summary');
+  systemDetails.appendChild(systemSummary);
+  const systemBody = el('div', { class: 'system-blocks' });
+  systemDetails.appendChild(systemBody);
+
+  // Normalize system into a list of {kind: 'text'|'raw', textarea}
+  const systemState = normalizeSystem(body.system);
+  function renderSystem() {
+    systemBody.innerHTML = '';
+    let totalChars = 0;
+    if (systemState.kind === 'string') {
+      totalChars = (systemState.text || '').length;
+      const blk = el('div', { class: 'system-block' },
+        el('div', { class: 'system-block-head' }, el('span', {}, `text · ${fmtBytes(totalChars)}`)),
+      );
+      const ta = el('textarea', { rows: 8, disabled: readOnly ? true : undefined });
+      ta.value = systemState.text || '';
+      if (!readOnly) ta.addEventListener('input', () => {
+        systemState.text = ta.value;
+        updateSystemSummary();
+      });
+      blk.appendChild(ta);
+      systemBody.appendChild(blk);
+    } else if (systemState.kind === 'array') {
+      systemState.blocks.forEach((b, i) => {
+        const isText = b && b.type === 'text';
+        totalChars += isText ? (b.text || '').length : JSON.stringify(b).length;
+        const blk = el('div', { class: 'system-block' },
+          el('div', { class: 'system-block-head' },
+            el('span', {}, `[${i}] ${b.type || '?'}${b.cache_control ? ' · ⚡cache' : ''}`),
+            el('span', {}, fmtBytes(isText ? (b.text || '').length : JSON.stringify(b).length))),
+        );
+        if (isText) {
+          const ta = el('textarea', { rows: 10, disabled: readOnly ? true : undefined });
+          ta.value = b.text || '';
+          if (!readOnly) ta.addEventListener('input', () => {
+            b.text = ta.value;
+            updateSystemSummary();
+          });
+          blk.appendChild(ta);
+        } else {
+          const ta = el('textarea', { class: 'raw-edit', rows: 8, disabled: readOnly ? true : undefined });
+          ta.value = JSON.stringify(b, null, 2);
+          if (!readOnly) ta.addEventListener('input', () => {
+            try {
+              const nb = JSON.parse(ta.value);
+              Object.keys(b).forEach(k => delete b[k]);
+              Object.assign(b, nb);
+              updateSystemSummary();
+            } catch {}
+          });
+          blk.appendChild(ta);
+        }
+        systemBody.appendChild(blk);
+      });
+    } else {
+      systemBody.appendChild(el('div', { class: 'read-only-text muted' }, '(no system prompt)'));
+    }
+  }
+  function updateSystemSummary() {
+    let total = 0;
+    if (systemState.kind === 'string') total = (systemState.text || '').length;
+    else if (systemState.kind === 'array') {
+      for (const b of systemState.blocks) {
+        total += (b && b.type === 'text') ? (b.text || '').length : JSON.stringify(b || '').length;
+      }
+    }
+    const count = systemState.kind === 'array' ? systemState.blocks.length : (systemState.kind === 'string' ? 1 : 0);
+    systemSummary.innerHTML = '';
+    systemSummary.append('System ');
+    systemSummary.appendChild(el('span', { class: 'muted' }, `· ${count} block${count !== 1 ? 's' : ''} · ${fmtBytes(total)}`));
+  }
+  updateSystemSummary();
+  renderSystem();
+  host.appendChild(systemDetails);
+
+  // ─── Messages ───
+  const messagesDetails = el('details', { class: 'collapsible', open: true });
+  const messagesSummary = el('summary');
+  messagesDetails.appendChild(messagesSummary);
+  const messagesList = el('div', { class: 'messages-list' });
+  messagesDetails.appendChild(messagesList);
+
+  function renderMessages() {
+    messagesList.innerHTML = '';
+    body.messages.forEach((m, mi) => {
+      const card = renderMessageCard(m, mi, readOnly, () => {
+        updateMessagesSummary();
+      }, () => {
+        // remove
+        body.messages.splice(mi, 1);
+        renderMessages();
+        updateMessagesSummary();
+      });
+      messagesList.appendChild(card);
+    });
+    if (!readOnly) {
+      const addRow = el('div', { class: 'add-message-row' },
+        el('button', { class: 'btn', onclick: () => { body.messages.push({ role: 'user', content: [{ type: 'text', text: '' }] }); renderMessages(); updateMessagesSummary(); } }, '+ user'),
+        el('button', { class: 'btn', onclick: () => { body.messages.push({ role: 'assistant', content: [{ type: 'text', text: '' }] }); renderMessages(); updateMessagesSummary(); } }, '+ assistant'),
+      );
+      messagesList.appendChild(addRow);
+    }
+  }
+  function updateMessagesSummary() {
+    let total = 0;
+    for (const m of body.messages) {
+      total += JSON.stringify(m).length;
+    }
+    messagesSummary.innerHTML = '';
+    messagesSummary.append('Messages ');
+    messagesSummary.appendChild(el('span', { class: 'muted' }, `· ${body.messages.length} · ${fmtBytes(total)}`));
+  }
+  updateMessagesSummary();
+  renderMessages();
+  host.appendChild(messagesDetails);
+
+  // ─── Tools ───
+  const toolsDetails = el('details', { class: 'collapsible' });
+  const toolsSummary = el('summary');
+  toolsDetails.appendChild(toolsSummary);
+  const toolsState = { raw: body.tools ? JSON.stringify(body.tools, null, 2) : '' };
+  const toolsTa = el('textarea', { class: 'raw-edit', rows: 14, disabled: readOnly ? true : undefined });
+  toolsTa.value = toolsState.raw;
+  if (!readOnly) toolsTa.addEventListener('input', () => { toolsState.raw = toolsTa.value; updateToolsSummary(); });
+  toolsDetails.appendChild(toolsTa);
+  function updateToolsSummary() {
+    let count = 0;
+    try { const arr = JSON.parse(toolsState.raw); if (Array.isArray(arr)) count = arr.length; } catch {}
+    toolsSummary.innerHTML = '';
+    toolsSummary.append('Tools ');
+    toolsSummary.appendChild(el('span', { class: 'muted' }, `· ${count} · ${fmtBytes(toolsState.raw.length)}`));
+  }
+  updateToolsSummary();
+  host.appendChild(toolsDetails);
+
+  // ─── Other (every other top-level key as raw JSON) ───
+  const structuredKeys = ['model', 'max_tokens', 'stream', 'temperature', 'system', 'messages', 'tools'];
+  const otherObj = {};
+  for (const [k, v] of Object.entries(body)) {
+    if (!structuredKeys.includes(k)) otherObj[k] = v;
+  }
+  const otherDetails = el('details', { class: 'collapsible' });
+  const otherSummary = el('summary');
+  otherDetails.appendChild(otherSummary);
+  const otherState = { raw: Object.keys(otherObj).length ? JSON.stringify(otherObj, null, 2) : '{}' };
+  const otherTa = el('textarea', { class: 'raw-edit', rows: 10, disabled: readOnly ? true : undefined });
+  otherTa.value = otherState.raw;
+  if (!readOnly) otherTa.addEventListener('input', () => { otherState.raw = otherTa.value; updateOtherSummary(); });
+  otherDetails.appendChild(otherTa);
+  function updateOtherSummary() {
+    let keys = [];
+    try { keys = Object.keys(JSON.parse(otherState.raw)); } catch {}
+    otherSummary.innerHTML = '';
+    otherSummary.append('Other fields ');
+    otherSummary.appendChild(el('span', { class: 'muted' }, `· ${keys.length ? keys.join(', ') : '(none)'}`));
+  }
+  updateOtherSummary();
+  host.appendChild(otherDetails);
+
+  return {
+    isStructured: true,
+    getBody: () => {
+      const out = {};
+      // Preserve original key order (model/system/messages/tools usually first)
+      // Start with the structured fields in a natural order
+      if (metaInputs.model.value !== '') out.model = metaInputs.model.value;
+      if (metaInputs.max_tokens.value !== '') out.max_tokens = +metaInputs.max_tokens.value;
+
+      // system
+      if (systemState.kind === 'string') out.system = systemState.text;
+      else if (systemState.kind === 'array') out.system = systemState.blocks;
+
+      // messages
+      out.messages = body.messages;
+
+      // tools
+      try { const t = JSON.parse(toolsState.raw); if (t != null) out.tools = t; }
+      catch { if (body.tools != null) out.tools = body.tools; }
+
+      // other
+      try {
+        const o = JSON.parse(otherState.raw);
+        for (const [k, v] of Object.entries(o)) out[k] = v;
+      } catch {}
+
+      // Add stream / temperature into out (after others, but doesn't really matter)
+      out.stream = metaInputs.stream.checked;
+      if (metaInputs.temperature.value !== '') out.temperature = +metaInputs.temperature.value;
+
+      return JSON.stringify(out, null, 2);
+    },
+  };
+}
+
+function normalizeSystem(sys) {
+  if (sys == null) return { kind: 'absent' };
+  if (typeof sys === 'string') return { kind: 'string', text: sys };
+  if (Array.isArray(sys)) return { kind: 'array', blocks: sys };
+  return { kind: 'absent' };
+}
+
+function renderMessageCard(message, idx, readOnly, onChange, onRemove) {
+  const card = el('div', { class: 'message-card', data: { role: message.role || 'user' } });
+
+  // Normalize content into array of blocks for editing convenience
+  let blocks;
+  if (typeof message.content === 'string') {
+    blocks = [{ type: 'text', text: message.content }];
+    message.content = blocks; // mutate the message so it stays array
+  } else if (Array.isArray(message.content)) {
+    blocks = message.content;
+  } else {
+    blocks = [];
+    message.content = blocks;
+  }
+
+  // Summary
+  const textCount = blocks.filter(b => b.type === 'text').length;
+  const otherTypes = blocks.filter(b => b.type !== 'text').map(b => b.type);
+  const summaryParts = [];
+  if (textCount) summaryParts.push(`${textCount} text`);
+  if (otherTypes.length) summaryParts.push(otherTypes.join(', '));
+  const totalLen = JSON.stringify(blocks).length;
+
+  const head = el('div', { class: 'message-head' },
+    el('span', { class: 'message-role' }, `#${idx} ${message.role || '?'}`),
+    el('span', { class: 'message-summary' }, `· ${summaryParts.join(' · ') || 'empty'} · ${fmtBytes(totalLen)}`),
+    el('span', { class: 'message-actions' },
+      !readOnly ? el('button', {
+        class: 'icon-btn',
+        title: 'switch role',
+        onclick: () => {
+          message.role = (message.role === 'user') ? 'assistant' : 'user';
+          card.dataset.role = message.role;
+          head.querySelector('.message-role').textContent = `#${idx} ${message.role}`;
+          onChange?.();
+        },
+      }, '⇄') : null,
+      !readOnly ? el('button', {
+        class: 'icon-btn',
+        title: '+ text block',
+        onclick: () => {
+          blocks.push({ type: 'text', text: '' });
+          renderBlocks();
+          onChange?.();
+        },
+      }, '+text') : null,
+      !readOnly ? el('button', {
+        class: 'icon-btn danger',
+        title: 'remove message',
+        onclick: () => onRemove?.(),
+      }, '✕') : null,
+    ),
+  );
+  card.appendChild(head);
+
+  const body = el('div', { class: 'message-body' });
+  card.appendChild(body);
+
+  function renderBlocks() {
+    body.innerHTML = '';
+    blocks.forEach((b, bi) => {
+      body.appendChild(renderContentBlock(b, bi, blocks, readOnly, () => onChange?.()));
+    });
+  }
+  renderBlocks();
+
+  return card;
+}
+
+function renderContentBlock(block, bi, blocks, readOnly, onChange) {
+  const wrap = el('div', { class: 'content-block' });
+  const type = block.type || 'unknown';
+  const head = el('div', { class: 'content-block-head' },
+    el('span', { class: 'content-block-type content-block-' + type }, type),
+    type === 'tool_use' ? el('span', { class: 'muted' }, `· ${block.name || '?'} · id=${block.id || '?'}`) : null,
+    type === 'tool_result' ? el('span', { class: 'muted' }, `· id=${block.tool_use_id || '?'}${block.is_error ? ' · ⚠error' : ''}`) : null,
+    el('span', { class: 'muted', style: 'margin-left:auto' }, fmtBytes(JSON.stringify(block).length)),
+    !readOnly ? el('button', {
+      class: 'icon-btn danger',
+      title: 'remove block',
+      style: 'margin-left:6px',
+      onclick: () => { blocks.splice(bi, 1); wrap.parentNode.removeChild(wrap); onChange?.(); },
+    }, '✕') : null,
+  );
+  wrap.appendChild(head);
+
+  if (type === 'text') {
+    const ta = el('textarea', { disabled: readOnly ? true : undefined });
+    ta.value = block.text || '';
+    if (!readOnly) ta.addEventListener('input', () => { block.text = ta.value; onChange?.(); });
+    wrap.appendChild(ta);
+  } else if (type === 'thinking') {
+    // text-shaped under .thinking
+    const ta = el('textarea', { disabled: readOnly ? true : undefined });
+    ta.value = block.thinking || '';
+    if (!readOnly) ta.addEventListener('input', () => { block.thinking = ta.value; onChange?.(); });
+    wrap.appendChild(ta);
+  } else if (type === 'tool_result') {
+    // tool_result content is itself a string or content blocks
+    const content = block.content;
+    if (typeof content === 'string') {
+      const ta = el('textarea', { disabled: readOnly ? true : undefined });
+      ta.value = content;
+      if (!readOnly) ta.addEventListener('input', () => { block.content = ta.value; onChange?.(); });
+      wrap.appendChild(ta);
+    } else {
+      // raw JSON for nested structure
+      const ta = el('textarea', { class: 'raw-edit', disabled: readOnly ? true : undefined });
+      ta.value = JSON.stringify(block, null, 2);
+      if (!readOnly) ta.addEventListener('input', () => {
+        try {
+          const nb = JSON.parse(ta.value);
+          Object.keys(block).forEach(k => delete block[k]);
+          Object.assign(block, nb);
+          onChange?.();
+        } catch {}
+      });
+      wrap.appendChild(ta);
+    }
+  } else {
+    // generic raw JSON view
+    const det = el('details', {});
+    det.appendChild(el('summary', {}, 'view / edit JSON'));
+    const ta = el('textarea', { class: 'raw-edit', disabled: readOnly ? true : undefined });
+    ta.value = JSON.stringify(block, null, 2);
+    if (!readOnly) ta.addEventListener('input', () => {
+      try {
+        const nb = JSON.parse(ta.value);
+        Object.keys(block).forEach(k => delete block[k]);
+        Object.assign(block, nb);
+        onChange?.();
+      } catch {}
+    });
+    det.appendChild(ta);
+    wrap.appendChild(det);
+  }
+
+  return wrap;
+}
+
 // ─── SSE connection ─────────────────────────────────────────────────
 let evtSource = null;
 function connect() {
@@ -111,6 +501,10 @@ function connect() {
     state.intercept = !!snap.intercept;
     state.rules = snap.rules || [];
     state.upstream = snap.upstream || '';
+    const proxyUrl = $('empty-proxy-url');
+    if (proxyUrl) {
+      proxyUrl.textContent = snap.proxy_addr ? `http://${snap.proxy_addr}` : 'http://127.0.0.1:8080';
+    }
     state.captures.clear();
     state.order = [];
     for (const c of (snap.captures || [])) {
@@ -122,12 +516,8 @@ function connect() {
     $('conn-status').className = 'status ok';
   });
   evtSource.onmessage = (e) => {
-    try {
-      const ev = JSON.parse(e.data);
-      handleEvent(ev);
-    } catch (err) {
-      console.error('bad event', err, e.data);
-    }
+    try { handleEvent(JSON.parse(e.data)); }
+    catch (err) { console.error('bad event', err, e.data); }
   };
   evtSource.onerror = () => {
     $('conn-status').textContent = '● disconnected (retrying)';
@@ -185,8 +575,6 @@ function handleEvent(ev) {
       state.rules = ev.payload || [];
       $('rules-count').textContent = state.rules.filter(r => r.enabled).length;
       break;
-    default:
-      // ignore unknown events
   }
 }
 
@@ -196,7 +584,6 @@ function renderAll() {
   $('intercept-toggle').checked = state.intercept;
   $('rules-count').textContent = (state.rules || []).filter(r => r.enabled).length;
   $('captures').innerHTML = '';
-  // render newest first
   for (let i = state.order.length - 1; i >= 0; i--) {
     const cap = state.captures.get(state.order[i]);
     if (cap) renderListItem(cap);
@@ -253,7 +640,6 @@ function renderListItem(cap) {
     cap.response?.status ? `${status} · ${fmtMs(cap.duration_ms)}` : cap.status));
 
   if (!existing) {
-    // newest first
     const list = $('captures');
     if (captureMatches(cap, state.filter)) {
       list.insertBefore(li, list.firstChild);
@@ -281,33 +667,31 @@ function renderDetail(cap) {
   $('d-time').textContent = [
     cap.started_at ? new Date(cap.started_at).toLocaleTimeString() : '',
     cap.duration_ms ? `· ${fmtMs(cap.duration_ms)}` : '',
-    cap.modified ? '· modified' : '',
-    cap.replay_of ? `· replay of ${cap.replay_of}` : '',
+    cap.modified ? '· ✎ modified' : '',
+    cap.replay_of ? `· ↻ replay of ${cap.replay_of}` : '',
   ].filter(Boolean).join(' ');
 
-  // Request tab
   $('req-line').textContent = `${cap.request?.method || ''} ${cap.request?.url || ''}`;
   renderHeaders($('req-headers'), cap.request?.headers || {});
   $('req-headers-count').textContent = `(${Object.keys(cap.request?.headers || {}).length})`;
   const reqBody = cap.request?.body || '';
-  $('req-body-info').textContent = reqBody ? `(${reqBody.length} bytes)` : '(empty)';
-  $('req-body').innerHTML = highlightJSON(tryPrettyJSON(reqBody));
+  $('req-body-info').textContent = reqBody ? `(${fmtBytes(reqBody.length)})` : '(empty)';
+  // structured read-only view
+  createBodyEditor('req-body-structured', reqBody, { readOnly: true });
 
-  // Response tab
   $('resp-line').textContent = cap.response
     ? `${cap.response.status}${cap.response.streaming ? ' · streaming SSE' : ''}`
     : (cap.error ? 'ERROR: ' + cap.error : '(no response yet)');
   renderHeaders($('resp-headers'), cap.response?.headers || {});
   $('resp-headers-count').textContent = `(${Object.keys(cap.response?.headers || {}).length})`;
   const respBody = cap.response?.body || (cap.response?.chunks || []).map(c => c.data).join('');
-  $('resp-body-info').textContent = respBody ? `(${respBody.length} bytes${cap.response?.streaming ? ', SSE' : ''})` : '(none)';
+  $('resp-body-info').textContent = respBody ? `(${fmtBytes(respBody.length)}${cap.response?.streaming ? ', SSE' : ''})` : '(none)';
   if (cap.response?.streaming) {
     $('resp-body').innerHTML = highlightSSE(respBody);
   } else {
     $('resp-body').innerHTML = highlightJSON(tryPrettyJSON(respBody));
   }
 
-  // Raw tab
   $('raw-json').innerHTML = highlightJSON(JSON.stringify(cap, null, 2));
 }
 
@@ -317,7 +701,7 @@ function appendStreamChunk(chunk) {
   if (document.querySelector('#tab-resp:not([hidden])')) {
     const respBody = (cap.response.chunks || []).map(c => c.data).join('');
     $('resp-body').innerHTML = highlightSSE(respBody);
-    $('resp-body-info').textContent = `(${respBody.length} bytes, SSE, ${cap.response.chunks.length} chunks)`;
+    $('resp-body-info').textContent = `(${fmtBytes(respBody.length)}, SSE, ${cap.response.chunks.length} chunks)`;
   }
 }
 
@@ -327,16 +711,12 @@ function renderHeaders(tbl, headers) {
   for (const k of names) {
     const vs = headers[k] || [];
     for (const v of vs) {
-      const tr = el('tr', {},
-        el('td', { class: 'k' }, k),
-        el('td', { class: 'v' }, v)
-      );
-      tbl.appendChild(tr);
+      tbl.appendChild(el('tr', {}, el('td', { class: 'k' }, k), el('td', { class: 'v' }, v)));
     }
   }
 }
 
-// ─── Tabs ──────────────────────────────────────────────────────────
+// ─── Detail tabs ───────────────────────────────────────────────────
 document.querySelectorAll('.tab').forEach(t => {
   t.addEventListener('click', () => {
     document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
@@ -379,10 +759,37 @@ $('filter').addEventListener('input', (e) => {
   updateCount();
 });
 
+// ─── View tabs (Structured / Raw) ──────────────────────────────────
+function setupViewTabs(prefix, getEditor, setEditor) {
+  document.querySelectorAll(`.view-tabs[data-target="${prefix}"] .view-tab`).forEach(btn => {
+    btn.addEventListener('click', () => {
+      const view = btn.dataset.view;
+      document.querySelectorAll(`.view-tabs[data-target="${prefix}"] .view-tab`)
+        .forEach(b => b.classList.toggle('active', b === btn));
+      const structuredEl = $(prefix + '-structured');
+      const rawEl = $(prefix + '-raw');
+      const rawTextarea = $(prefix + '-body');
+
+      if (view === 'raw') {
+        const cur = getEditor();
+        rawTextarea.value = cur ? cur.getBody() : '';
+        structuredEl.hidden = true;
+        rawEl.hidden = false;
+      } else {
+        const newEditor = createBodyEditor(prefix + '-structured', rawTextarea.value);
+        setEditor(newEditor);
+        structuredEl.hidden = false;
+        rawEl.hidden = true;
+      }
+    });
+  });
+}
+setupViewTabs('im', () => imEditor, (e) => { imEditor = e; });
+setupViewTabs('rm', () => rmEditor, (e) => { rmEditor = e; });
+
 // ─── Intercept modal ────────────────────────────────────────────────
 function openInterceptModal(cap) {
   if (state.interceptModalFor && state.interceptModalFor !== cap.id) {
-    // already showing another intercepted request — queue this one
     if (!state.interceptQueue.includes(cap.id)) state.interceptQueue.push(cap.id);
     return;
   }
@@ -390,14 +797,23 @@ function openInterceptModal(cap) {
   $('im-id').textContent = `${cap.id} · ${cap.request.method} ${cap.request.path}`;
   $('im-url').value = cap.request.url || '';
   $('im-headers').value = JSON.stringify(cap.request.headers || {}, null, 2);
-  $('im-body').value = tryPrettyJSON(cap.request.body || '');
+  $('im-headers-summary').textContent = `· ${Object.keys(cap.request.headers || {}).length} · ${fmtBytes(JSON.stringify(cap.request.headers || {}).length)}`;
+
+  // Start in structured view
+  document.querySelectorAll('.view-tabs[data-target="im"] .view-tab').forEach(b =>
+    b.classList.toggle('active', b.dataset.view === 'structured'));
+  $('im-structured').hidden = false;
+  $('im-raw').hidden = true;
+  imEditor = createBodyEditor('im-structured', cap.request.body || '');
+  $('im-body').value = '';
+
   $('intercept-modal').hidden = false;
 }
 
 function closeInterceptModal() {
   state.interceptModalFor = null;
   $('intercept-modal').hidden = true;
-  // pop next from queue, if any
+  imEditor = null;
   while (state.interceptQueue.length > 0) {
     const nextId = state.interceptQueue.shift();
     const next = state.captures.get(nextId);
@@ -406,6 +822,11 @@ function closeInterceptModal() {
       return;
     }
   }
+}
+
+function readImBody() {
+  if (!$('im-raw').hidden) return $('im-body').value;
+  return imEditor ? imEditor.getBody() : '';
 }
 
 $('im-forward-orig').addEventListener('click', async () => {
@@ -421,7 +842,10 @@ $('im-forward-mod').addEventListener('click', async () => {
   let headers;
   try { headers = JSON.parse($('im-headers').value); }
   catch (e) { toast('Invalid headers JSON: ' + e.message, 'error'); return; }
-  await postForward(id, $('im-url').value, headers, $('im-body').value);
+  const body = readImBody();
+  try { JSON.parse(body); }
+  catch (e) { toast('Invalid body JSON: ' + e.message, 'error'); return; }
+  await postForward(id, $('im-url').value, headers, body);
   closeInterceptModal();
 });
 
@@ -449,18 +873,33 @@ function openReplayModal(cap) {
   $('rm-method').value = cap.request.method || 'POST';
   $('rm-url').value = cap.request.url || '';
   $('rm-headers').value = JSON.stringify(cap.request.headers || {}, null, 2);
-  $('rm-body').value = tryPrettyJSON(cap.request.body || '');
+  $('rm-headers-summary').textContent = `· ${Object.keys(cap.request.headers || {}).length} · ${fmtBytes(JSON.stringify(cap.request.headers || {}).length)}`;
+
+  document.querySelectorAll('.view-tabs[data-target="rm"] .view-tab').forEach(b =>
+    b.classList.toggle('active', b.dataset.view === 'structured'));
+  $('rm-structured').hidden = false;
+  $('rm-raw').hidden = true;
+  rmEditor = createBodyEditor('rm-structured', cap.request.body || '');
+  $('rm-body').value = '';
+
   $('replay-modal').dataset.fromId = cap.id;
   $('replay-modal').hidden = false;
 }
 
-$('rm-cancel').addEventListener('click', () => { $('replay-modal').hidden = true; });
+$('rm-cancel').addEventListener('click', () => {
+  $('replay-modal').hidden = true;
+  rmEditor = null;
+});
 
 $('rm-send').addEventListener('click', async () => {
   const id = $('replay-modal').dataset.fromId;
   let headers;
   try { headers = JSON.parse($('rm-headers').value); }
   catch (e) { toast('Invalid headers JSON: ' + e.message, 'error'); return; }
+  let body = !$('rm-raw').hidden ? $('rm-body').value : (rmEditor ? rmEditor.getBody() : '');
+  try { JSON.parse(body); }
+  catch (e) { toast('Invalid body JSON: ' + e.message, 'error'); return; }
+
   const res = await fetch(`/admin/captures/${id}/replay`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -468,12 +907,13 @@ $('rm-send').addEventListener('click', async () => {
       method: $('rm-method').value,
       url: $('rm-url').value,
       headers,
-      body: $('rm-body').value,
+      body,
     }),
   });
   if (!res.ok) { toast('Replay failed: ' + res.status, 'error'); return; }
   toast('Replay sent', 'ok');
   $('replay-modal').hidden = true;
+  rmEditor = null;
 });
 
 // ─── Rules modal ────────────────────────────────────────────────────
@@ -487,10 +927,9 @@ function renderRulesTable() {
   const tbody = $('rules-body');
   tbody.innerHTML = '';
   state.rulesDraft.forEach((r, i) => {
-    const tr = el('tr', {},
+    tbody.appendChild(el('tr', {},
       el('td', {}, el('input', {
-        type: 'checkbox',
-        checked: r.enabled ? true : undefined,
+        type: 'checkbox', checked: r.enabled ? true : undefined,
         onchange: (e) => { state.rulesDraft[i].enabled = e.target.checked; },
       })),
       el('td', {}, el('input', {
@@ -514,9 +953,8 @@ function renderRulesTable() {
       el('td', {}, el('button', {
         class: 'icon-btn', title: 'Delete',
         onclick: () => { state.rulesDraft.splice(i, 1); renderRulesTable(); },
-      }, '✕'))
-    );
-    tbody.appendChild(tr);
+      }, '✕')),
+    ));
   });
 }
 
@@ -540,8 +978,7 @@ $('rules-save').addEventListener('click', async () => {
     body: JSON.stringify(state.rulesDraft),
   });
   if (!res.ok) {
-    const txt = await res.text();
-    toast('Rule error: ' + txt, 'error');
+    toast('Rule error: ' + (await res.text()), 'error');
     return;
   }
   state.rules = await res.json();
@@ -550,12 +987,10 @@ $('rules-save').addEventListener('click', async () => {
   toast('Rules saved', 'ok');
 });
 
-// Close modals on Esc
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (!$('rules-modal').hidden) $('rules-modal').hidden = true;
-    else if (!$('replay-modal').hidden) $('replay-modal').hidden = true;
-    // intercept modal: don't auto-close, the user must decide
+    else if (!$('replay-modal').hidden) { $('replay-modal').hidden = true; rmEditor = null; }
   }
 });
 

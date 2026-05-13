@@ -36,7 +36,23 @@
   </aside>
 
   <section class="detail-pane">
-    <div class="empty" id="empty-pane">Select a capture on the left.</div>
+    <div class="empty" id="empty-pane">
+      <div class="empty-inner">
+        <div class="empty-icon">⏳</div>
+        <h2>Waiting for Claude Code traffic</h2>
+        <p class="muted">Captures will appear in the left panel as soon as Claude Code (or any Anthropic SDK) makes a request through the proxy.</p>
+        <div class="empty-cmd">
+          <span class="muted">In another shell, run:</span>
+          <pre class="code line"><span class="empty-prompt">$</span> export ANTHROPIC_BASE_URL=<span id="empty-proxy-url">http://127.0.0.1:8080</span>
+<span class="empty-prompt">$</span> claude</pre>
+        </div>
+        <div class="empty-hints">
+          <div class="hint"><b>Intercept</b> · top-right toggle pauses every request so you can edit URL, headers, or body before forwarding.</div>
+          <div class="hint"><b>Rules</b> · regex match &amp; replace applied automatically to requests or responses.</div>
+          <div class="hint"><b>Replay</b> · clone any captured request, edit it, send it again.</div>
+        </div>
+      </div>
+    </div>
     <div class="detail" id="detail-pane" hidden>
       <div class="detail-head">
         <span class="badge method" id="d-method"></span>
@@ -58,7 +74,7 @@
           <h3>Headers <span class="muted" id="req-headers-count"></span></h3>
           <table class="kv" id="req-headers"></table>
           <h3>Body <span class="muted" id="req-body-info"></span></h3>
-          <pre class="code body" id="req-body"></pre>
+          <div id="req-body-structured" class="body-view"></div>
         </div>
         <div class="tab-pane" id="tab-resp" hidden>
           <h3>Status</h3>
@@ -78,28 +94,87 @@
 
 <!-- Intercept modal -->
 <div class="modal" id="intercept-modal" hidden>
-  <div class="modal-content wide">
+  <div class="modal-content fullscreen">
     <div class="modal-head">
       <h2>Intercepted request</h2>
       <span class="modal-id" id="im-id"></span>
+      <span class="grow"></span>
+      <div class="view-tabs" data-target="im">
+        <button class="view-tab active" data-view="structured">Structured</button>
+        <button class="view-tab" data-view="raw">Raw JSON</button>
+      </div>
     </div>
-    <div class="field">
-      <label>URL (path + query)</label>
-      <input type="text" id="im-url">
+
+    <div class="modal-body-scroll">
+      <div class="field">
+        <label>URL (path + query)</label>
+        <input type="text" id="im-url">
+      </div>
+
+      <details class="collapsible">
+        <summary>Headers <span class="muted" id="im-headers-summary"></span></summary>
+        <textarea id="im-headers" rows="6" class="code"></textarea>
+      </details>
+
+      <div id="im-structured" class="body-editor"></div>
+      <div id="im-raw" class="body-editor" hidden>
+        <label>Body (raw JSON)</label>
+        <textarea id="im-body" rows="30" class="code"></textarea>
+      </div>
     </div>
-    <div class="field">
-      <label>Headers (JSON object: name → [values])</label>
-      <textarea id="im-headers" rows="6" class="code"></textarea>
-    </div>
-    <div class="field">
-      <label>Body</label>
-      <textarea id="im-body" rows="16" class="code"></textarea>
-    </div>
+
     <div class="modal-actions">
       <button id="im-drop" class="btn danger">Drop</button>
       <span class="grow"></span>
+      <span class="muted" id="im-validation"></span>
       <button id="im-forward-orig" class="btn">Forward unchanged</button>
       <button id="im-forward-mod" class="btn primary">Forward modified</button>
+    </div>
+  </div>
+</div>
+
+<!-- Replay modal -->
+<div class="modal" id="replay-modal" hidden>
+  <div class="modal-content fullscreen">
+    <div class="modal-head">
+      <h2>Replay request</h2>
+      <span class="modal-id" id="rm-from"></span>
+      <span class="grow"></span>
+      <div class="view-tabs" data-target="rm">
+        <button class="view-tab active" data-view="structured">Structured</button>
+        <button class="view-tab" data-view="raw">Raw JSON</button>
+      </div>
+    </div>
+
+    <div class="modal-body-scroll">
+      <div class="field-row">
+        <div class="field">
+          <label>Method</label>
+          <input type="text" id="rm-method">
+        </div>
+        <div class="field grow">
+          <label>URL (path + query)</label>
+          <input type="text" id="rm-url">
+        </div>
+      </div>
+
+      <details class="collapsible">
+        <summary>Headers <span class="muted" id="rm-headers-summary"></span></summary>
+        <textarea id="rm-headers" rows="6" class="code"></textarea>
+      </details>
+
+      <div id="rm-structured" class="body-editor"></div>
+      <div id="rm-raw" class="body-editor" hidden>
+        <label>Body (raw JSON)</label>
+        <textarea id="rm-body" rows="30" class="code"></textarea>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button id="rm-cancel" class="btn">Cancel</button>
+      <span class="grow"></span>
+      <span class="muted" id="rm-validation"></span>
+      <button id="rm-send" class="btn primary">Send replay</button>
     </div>
   </div>
 </div>
@@ -124,37 +199,6 @@
       <span class="grow"></span>
       <button id="rules-cancel" class="btn">Cancel</button>
       <button id="rules-save" class="btn primary">Save</button>
-    </div>
-  </div>
-</div>
-
-<!-- Replay modal -->
-<div class="modal" id="replay-modal" hidden>
-  <div class="modal-content wide">
-    <div class="modal-head">
-      <h2>Replay request</h2>
-      <span class="modal-id" id="rm-from"></span>
-    </div>
-    <div class="field">
-      <label>Method</label>
-      <input type="text" id="rm-method">
-    </div>
-    <div class="field">
-      <label>URL (path + query)</label>
-      <input type="text" id="rm-url">
-    </div>
-    <div class="field">
-      <label>Headers (JSON)</label>
-      <textarea id="rm-headers" rows="6" class="code"></textarea>
-    </div>
-    <div class="field">
-      <label>Body</label>
-      <textarea id="rm-body" rows="14" class="code"></textarea>
-    </div>
-    <div class="modal-actions">
-      <button id="rm-cancel" class="btn">Cancel</button>
-      <span class="grow"></span>
-      <button id="rm-send" class="btn primary">Send replay</button>
     </div>
   </div>
 </div>
