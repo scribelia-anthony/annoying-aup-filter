@@ -21,21 +21,12 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
-
-      - name: Cache Go build & modules
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum', 'go.mod') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
+          cache: false
 
       - name: Verify go.mod is tidy
         run: |
           go mod tidy
-          if [ -n "$(git status --porcelain go.mod go.sum 2>/dev/null)" ]; then
+          if ! git diff --quiet -- go.mod go.sum 2>/dev/null; then
             echo "go.mod / go.sum are not tidy:"
             git --no-pager diff -- go.mod go.sum
             exit 1
@@ -66,10 +57,11 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
+          cache: false
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v8
         with:
-          version: v1.62
+          version: v2.5
 
   govulncheck:
     name: govulncheck
@@ -80,6 +72,7 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
+          cache: false
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - name: Run govulncheck

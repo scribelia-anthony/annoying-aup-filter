@@ -44,7 +44,7 @@ func (a *API) RegisterRoutes(mux *http.ServeMux) {
 
 func (a *API) handleCaptures(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", 405)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	setJSON(w)
@@ -67,7 +67,7 @@ func (a *API) handleCaptureItem(w http.ResponseWriter, r *http.Request) {
 	switch action {
 	case "":
 		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", 405)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		snap, ok := a.store.Snapshot(id)
@@ -79,19 +79,19 @@ func (a *API) handleCaptureItem(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(snap)
 	case "forward":
 		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", 405)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		a.handleForward(w, r, id)
 	case "drop":
 		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", 405)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		a.handleDrop(w, r, id)
 	case "replay":
 		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", 405)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		a.handleReplay(w, r, id)
@@ -119,16 +119,9 @@ func (a *API) handleForward(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	modified := false
-	if req.URL != orig.Request.URL {
-		modified = true
-	}
-	if req.Body != orig.Request.Body {
-		modified = true
-	}
-	if !sameHeaders(req.Headers, orig.Request.Headers) {
-		modified = true
-	}
+	modified := req.URL != orig.Request.URL ||
+		req.Body != orig.Request.Body ||
+		!sameHeaders(req.Headers, orig.Request.Headers)
 
 	if !a.interceptor.Decide(id, intercept.Decision{
 		Action:   intercept.ActionForward,
@@ -137,15 +130,15 @@ func (a *API) handleForward(w http.ResponseWriter, r *http.Request, id string) {
 		Body:     req.Body,
 		Modified: modified,
 	}) {
-		http.Error(w, "not intercepted", 409)
+		http.Error(w, "not intercepted", http.StatusConflict)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (a *API) handleDrop(w http.ResponseWriter, r *http.Request, id string) {
+func (a *API) handleDrop(w http.ResponseWriter, _ *http.Request, id string) {
 	if !a.interceptor.Decide(id, intercept.Decision{Action: intercept.ActionDrop}) {
-		http.Error(w, "not intercepted", 409)
+		http.Error(w, "not intercepted", http.StatusConflict)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -187,7 +180,7 @@ func (a *API) handleFallback(w http.ResponseWriter, r *http.Request) {
 		payload, _ := json.Marshal(state)
 		a.store.Broadcast(store.Event{Type: "fallback_toggled", Payload: payload})
 	default:
-		http.Error(w, "method not allowed", 405)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
@@ -211,7 +204,7 @@ func (a *API) handleIntercept(w http.ResponseWriter, r *http.Request) {
 		payload, _ := json.Marshal(map[string]any{"enabled": req.Enabled})
 		a.store.Broadcast(store.Event{Type: "intercept_toggled", Payload: payload})
 	default:
-		http.Error(w, "method not allowed", 405)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
@@ -236,13 +229,13 @@ func (a *API) handleRules(w http.ResponseWriter, r *http.Request) {
 		payload, _ := json.Marshal(listed)
 		a.store.Broadcast(store.Event{Type: "rules_updated", Payload: payload})
 	default:
-		http.Error(w, "method not allowed", 405)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
 func (a *API) handleClear(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", 405)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	a.store.Clear()
@@ -281,14 +274,14 @@ func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 		"intercept":      a.interceptor.Enabled(),
 		"pending":        a.interceptor.Pending(),
 		"rules":          a.rules.List(),
-		"captures":       json.RawMessage(a.store.SnapshotAll()),
+		"captures":       a.store.SnapshotAll(),
 		"upstream":       a.proxy.Upstream(),
 		"proxy_addr":     a.ProxyAddr,
 		"fallback":       a.fallback.Enabled(),
 		"fallback_model": a.fallback.Model(),
 	}
 	statePayload, _ := json.Marshal(state)
-	fmt.Fprintf(w, "event: snapshot\ndata: %s\n\n", statePayload)
+	_, _ = fmt.Fprintf(w, "event: snapshot\ndata: %s\n\n", statePayload)
 	flusher.Flush()
 
 	ticker := time.NewTicker(15 * time.Second)
@@ -301,10 +294,10 @@ func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			data, _ := json.Marshal(ev)
-			fmt.Fprintf(w, "data: %s\n\n", data)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 		case <-ticker.C:
-			fmt.Fprint(w, ": heartbeat\n\n")
+			_, _ = fmt.Fprint(w, ": heartbeat\n\n")
 			flusher.Flush()
 		case <-r.Context().Done():
 			return

@@ -236,7 +236,7 @@ func (p *Proxy) forward(w http.ResponseWriter, ctx context.Context, capID, metho
 // streamPassthrough writes upstream response headers + body directly to
 // w, recording each chunk in the capture as it goes.
 func (p *Proxy) streamPassthrough(w http.ResponseWriter, capID string, resp *http.Response, respHeaders map[string][]string, started time.Time) {
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	for k, vs := range respHeaders {
 		if isHopByHop(k) || strings.EqualFold(k, "Content-Length") || strings.EqualFold(k, "Content-Encoding") {
@@ -372,7 +372,7 @@ func (p *Proxy) streamWithFallback(
 			break
 		}
 		if rerr != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			p.failCapture(capID, "fallback peek: "+rerr.Error())
 			http.Error(w, "upstream stream error", http.StatusBadGateway)
 			return
@@ -382,7 +382,7 @@ func (p *Proxy) streamWithFallback(
 	switch decision {
 	case "refusal":
 		drainRest(resp.Body, &fullBody, &prefix, p, capID)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		end := time.Now()
 		bodyStr := fullBody.String()
@@ -448,11 +448,11 @@ func (p *Proxy) streamWithFallback(
 			}
 			if rerr != nil {
 				p.failCapture(capID, "stream read: "+rerr.Error())
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				return
 			}
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		end := time.Now()
 		bodyStr := fullBody.String()

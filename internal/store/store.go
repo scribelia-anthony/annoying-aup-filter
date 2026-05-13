@@ -76,11 +76,11 @@ type Store struct {
 	subs   map[chan Event]struct{}
 }
 
-func New(max int) *Store {
+func New(maxCaptures int) *Store {
 	return &Store{
 		captures: make(map[string]*Capture),
 		order:    make([]string, 0),
-		max:      max,
+		max:      maxCaptures,
 		subs:     make(map[chan Event]struct{}),
 	}
 }

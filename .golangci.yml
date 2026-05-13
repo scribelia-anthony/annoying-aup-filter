@@ -1,17 +1,16 @@
+version: "2"
+
 run:
   timeout: 5m
-  tests: true
 
 linters:
-  disable-all: true
+  default: none
   enable:
     - errcheck
     - govet
     - ineffassign
     - staticcheck
     - unused
-    - gofmt
-    - goimports
     - misspell
     - revive
     - gocritic
@@ -20,27 +19,39 @@ linters:
     - unconvert
     - unparam
     - errorlint
-
-linters-settings:
-  goimports:
-    local-prefixes: github.com/scribelia-anthony/prompt-cleaner
-  gocritic:
-    enabled-tags: [diagnostic, style, performance]
-    disabled-checks:
-      - ifElseChain
-      - singleCaseSwitch
-  revive:
+  settings:
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+      disabled-checks:
+        - ifElseChain
+        - singleCaseSwitch
+        - unnamedResult
+    revive:
+      rules:
+        - name: var-naming
+        - name: indent-error-flow
+        - name: errorf
+        - name: package-comments
+  exclusions:
     rules:
-      - name: exported
-        disabled: true   # internal/ package doc is enough; no need for per-symbol comments
-      - name: var-naming
-      - name: indent-error-flow
-      - name: errorf
-      - name: package-comments
+      - path: _test\.go
+        linters:
+          - errcheck
+          - unparam
+          - gocritic
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/scribelia-anthony/prompt-cleaner
 
 issues:
-  exclude-rules:
-    - path: _test\.go
-      linters: [errcheck, unparam, gocritic]
   max-issues-per-linter: 0
   max-same-issues: 0
