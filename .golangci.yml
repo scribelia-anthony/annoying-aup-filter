@@ -1,0 +1,46 @@
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gofmt
+    - goimports
+    - misspell
+    - revive
+    - gocritic
+    - bodyclose
+    - copyloopvar
+    - unconvert
+    - unparam
+    - errorlint
+
+linters-settings:
+  goimports:
+    local-prefixes: github.com/scribelia-anthony/prompt-cleaner
+  gocritic:
+    enabled-tags: [diagnostic, style, performance]
+    disabled-checks:
+      - ifElseChain
+      - singleCaseSwitch
+  revive:
+    rules:
+      - name: exported
+        disabled: true   # internal/ package doc is enough; no need for per-symbol comments
+      - name: var-naming
+      - name: indent-error-flow
+      - name: errorf
+      - name: package-comments
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters: [errcheck, unparam, gocritic]
+  max-issues-per-linter: 0
+  max-same-issues: 0
