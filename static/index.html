@@ -185,7 +185,7 @@
     </div>
     <h3 class="section">Getting started</h3>
     <p class="muted">Point Claude Code (or any Anthropic SDK) at the proxy. In another shell:</p>
-    <pre class="code line"><span class="empty-prompt">$</span> export ANTHROPIC_BASE_URL=<span id="help-proxy-url">http://127.0.0.1:8080</span>
+    <pre class="code"><span class="empty-prompt">$</span> export ANTHROPIC_BASE_URL=<span id="help-proxy-url">http://127.0.0.1:8080</span>
 <span class="empty-prompt">$</span> claude</pre>
 
     <h3 class="section">What the buttons do</h3>
@@ -203,9 +203,9 @@
       <div class="hint"><span class="legend-swatch swatch-aup"></span> refused by AUP classifier</div>
       <div class="hint"><span class="legend-swatch swatch-fallback"></span> AUP fallback retry that succeeded (Opus served it)</div>
       <div class="hint"><span class="legend-swatch swatch-fail"></span> AUP fallback retry that itself failed (Opus refused / error)</div>
-      <div class="hint">✎ = request body or headers were modified by you or by a rule</div>
-      <div class="hint">↻ = manual replay</div>
-      <div class="hint">⤴ = AUP fallback retry</div>
+      <div class="hint"><span class="glyph">*</span> = request body or headers were modified by you or by a rule</div>
+      <div class="hint">&#x21BB;&#xFE0E; = manual replay</div>
+      <div class="hint">&#x2934;&#xFE0E; = AUP fallback retry</div>
     </div>
 
     <div class="modal-actions">
