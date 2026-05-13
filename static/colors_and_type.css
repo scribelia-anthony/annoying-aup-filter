@@ -1,0 +1,187 @@
+/* ============================================================
+   Prompt Cleaner — Design Tokens
+   Dark dev-tool aesthetic for a Burp-like HTTP proxy UI
+   ============================================================ */
+
+/* ---------- Web fonts ----------
+   Fonts loaded from Google Fonts CDN.
+   For offline production: download woff2 and replace with @font-face
+   pointing at fonts/ (a fonts/README.txt lists the substitutions).
+*/
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap");
+
+:root {
+  /* ---------- Color: surfaces (layered, low chroma) ---------- */
+  --bg:        #0e1014;   /* canvas, app background */
+  --bg-2:      #161a22;   /* chrome: topbar, list pane, code blocks */
+  --bg-3:      #1d2230;   /* raised: buttons, inputs, badges */
+  --bg-hl:    #2a3142;   /* hover / selected state */
+  --border:   #262c39;   /* hairlines between regions */
+  --border-strong: #38405a;
+
+  /* ---------- Color: foreground ---------- */
+  --fg:       #d8dde6;   /* primary text */
+  --fg-2:     #98a0b0;   /* secondary / labels */
+  --fg-3:     #5f6878;   /* muted / metadata */
+  --fg-on-accent: #1a1208; /* text on orange fills */
+
+  /* ---------- Color: brand accent ---------- */
+  --accent:    #ff8a3d;   /* primary action, intercept signal */
+  --accent-2: #ffb37a;   /* hover, glow */
+  --accent-tint: rgba(255, 138, 61, 0.10);
+
+  /* ---------- Color: semantic / HTTP status palette ---------- */
+  --green:    #65d68f;   /* 2xx, completed, OK */
+  --red:      #ff6b6b;   /* 4xx/5xx, AUP refused, drop */
+  --yellow:   #ffcc66;   /* 3xx, pending, intercepted, secrets */
+  --blue:     #6db4ff;   /* method tokens, streaming, info */
+  --purple:   #b48bff;   /* fallback failed, replay, special */
+
+  /* tinted backgrounds for row states */
+  --tint-green:   rgba(101, 214, 143, 0.10);
+  --tint-red:     rgba(255, 107, 107, 0.10);
+  --tint-yellow:  rgba(255, 204, 102, 0.10);
+  --tint-blue:    rgba(109, 180, 255, 0.10);
+  --tint-purple:  rgba(180, 139, 255, 0.10);
+
+  /* ---------- Type families ---------- */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Fira Code", Menlo, Consolas, monospace;
+
+  /* ---------- Type scale ---------- */
+  --fs-10:    10px;  /* micro: legends, badges */
+  --fs-11:    11px;  /* secondary: meta, eyebrow caps */
+  --fs-12:    12px;  /* default UI: buttons, captures, code */
+  --fs-13:    13px;  /* body base */
+  --fs-14:    14px;  /* slight emphasis */
+  --fs-16:    16px;  /* modal titles */
+  --fs-18:    18px;  /* empty state H2 */
+  --fs-22:    22px;  /* page-level title (rare) */
+
+  --lh-tight:    1.2;
+  --lh-snug:     1.35;
+  --lh-normal:   1.5;
+  --lh-code:     1.45;
+
+  /* ---------- Spacing (4px base) ---------- */
+  --sp-1:  2px;
+  --sp-2:  4px;
+  --sp-3:  6px;
+  --sp-4:  8px;
+  --sp-5:  10px;
+  --sp-6:  12px;
+  --sp-7:  16px;
+  --sp-8:  20px;
+  --sp-9:  24px;
+  --sp-10: 32px;
+
+  /* ---------- Radii ---------- */
+  --radius-xs:  3px;   /* tiny tokens, swatches */
+  --radius-sm:  4px;   /* inputs, fields */
+  --radius:     6px;   /* default — buttons, panes */
+  --radius-md:  8px;   /* modals */
+  --radius-pill: 999px;
+
+  /* ---------- Shadows / elevation ---------- */
+  --shadow-1:   0 1px 0 rgba(0,0,0,0.4);                    /* hairline drop */
+  --shadow-2:   0 4px 12px rgba(0,0,0,0.35);                /* dropdowns, toasts */
+  --shadow-3:   0 16px 64px rgba(0,0,0,0.55);               /* modals */
+  --glow-accent: 0 0 8px var(--accent);                      /* status dot */
+
+  /* ---------- Motion ---------- */
+  --dur-fast:    60ms;
+  --dur-norm:    120ms;
+  --dur-slow:    200ms;
+  --ease:        cubic-bezier(0.2, 0.6, 0.2, 1);
+
+  /* ---------- Layout constants ---------- */
+  --topbar-h:   44px;
+  --list-pane-w: 380px;
+}
+
+/* ============================================================
+   Semantic type roles
+   ============================================================ */
+
+.t-title {
+  font-family: var(--font-sans);
+  font-size: var(--fs-16);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--fg);
+}
+
+.t-brand {
+  font-family: var(--font-sans);
+  font-size: var(--fs-13);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--fg);
+}
+
+.t-eyebrow {
+  font-family: var(--font-sans);
+  font-size: var(--fs-11);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-3);
+}
+
+.t-body {
+  font-family: var(--font-sans);
+  font-size: var(--fs-13);
+  line-height: var(--lh-normal);
+  color: var(--fg);
+}
+
+.t-ui {
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  line-height: var(--lh-snug);
+  color: var(--fg);
+}
+
+.t-meta {
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  color: var(--fg-3);
+}
+
+.t-code {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  line-height: var(--lh-code);
+  color: var(--fg);
+}
+
+.t-code-sm {
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  line-height: var(--lh-code);
+  color: var(--fg-2);
+}
+
+.t-micro {
+  font-family: var(--font-mono);
+  font-size: var(--fs-10);
+  letter-spacing: 0.04em;
+  color: var(--fg-3);
+}
+
+/* ============================================================
+   Base reset (opt-in via .pc-app on root)
+   ============================================================ */
+
+.pc-app, .pc-app * { box-sizing: border-box; }
+
+.pc-app {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: var(--fs-13);
+  line-height: var(--lh-normal);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
