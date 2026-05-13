@@ -208,16 +208,43 @@ a { color: var(--accent); }
 }
 
 .captures li {
-  padding: 8px 10px;
+  padding: 5px 10px;
   border-bottom: 1px solid var(--border);
   cursor: pointer;
   font-family: var(--mono);
   font-size: 12px;
   display: grid;
-  grid-template-columns: 50px 1fr 60px;
-  gap: 8px;
+  grid-template-columns: 44px 1fr auto;
+  grid-template-rows: auto auto;
+  gap: 0 8px;
   align-items: center;
   transition: background 60ms;
+  line-height: 1.35;
+}
+.captures li .method {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  align-self: center;
+}
+.captures li .path {
+  grid-column: 2;
+  grid-row: 1;
+}
+.captures li .meta {
+  grid-column: 3;
+  grid-row: 1;
+  font-size: 11px;
+  text-align: right;
+  white-space: nowrap;
+}
+.captures li .sub {
+  grid-column: 2 / span 2;
+  grid-row: 2;
+  font-size: 10px;
+  color: var(--fg-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .captures li:hover { background: var(--bg-3); }
@@ -235,9 +262,7 @@ a { color: var(--accent); }
 }
 
 .captures .meta {
-  font-size: 11px;
   color: var(--fg-3);
-  text-align: right;
 }
 
 .captures .st-completed   { color: var(--green); }
@@ -247,6 +272,39 @@ a { color: var(--accent); }
 .captures .st-pending     { color: var(--fg-2); }
 .captures .st-errored     { color: var(--red); }
 .captures .st-dropped     { color: var(--fg-3); }
+.captures .st-aup_refused { color: var(--red); font-weight: 600; }
+
+/* AUP refusal: bright red background tint, left bar */
+.captures li.aup-refused {
+  background: rgba(255, 107, 107, 0.10);
+  border-left: 3px solid var(--red);
+}
+.captures li.aup-refused .method { color: var(--red); }
+.captures li.aup-refused.selected { background: rgba(255, 107, 107, 0.22); }
+
+/* Fallback that succeeded: amber/orange tint */
+.captures li.fallback-saved {
+  background: rgba(255, 179, 122, 0.08);
+  border-left: 3px solid var(--accent);
+}
+.captures li.fallback-saved .method { color: var(--accent); }
+.captures li.fallback-saved.selected { background: rgba(255, 179, 122, 0.20); }
+.captures li.fallback-saved::before {
+  content: "⤴ ";
+  color: var(--accent);
+}
+/* Fallback that itself failed (4xx/5xx or Sonnet also refused): purple tint */
+.captures li.fallback-failed {
+  background: rgba(180, 139, 255, 0.08);
+  border-left: 3px solid var(--purple);
+}
+.captures li.fallback-failed .method { color: var(--purple); }
+.captures li.fallback-failed.selected { background: rgba(180, 139, 255, 0.20); }
+.captures li.fallback-failed::before {
+  content: "⤴ ";
+  color: var(--purple);
+}
+
 .captures li.modified::after {
   content: "✎";
   color: var(--accent);
@@ -424,6 +482,27 @@ a { color: var(--accent); }
   overflow: auto;
 }
 
+.header-controls {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.btn-tiny {
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  color: var(--fg-2);
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: var(--mono);
+}
+.btn-tiny:hover { background: var(--bg-hl); color: var(--fg); }
+.kv td.v.secret {
+  color: var(--yellow);
+  font-style: italic;
+  user-select: none;
+}
 .kv {
   width: 100%;
   border-collapse: collapse;

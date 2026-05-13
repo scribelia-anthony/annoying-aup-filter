@@ -20,6 +20,11 @@
       <span class="slider"></span>
       <span class="label">Intercept</span>
     </label>
+    <label class="switch" title="On AUP refusal, retry once with Sonnet 4.6">
+      <input type="checkbox" id="fallback-toggle">
+      <span class="slider"></span>
+      <span class="label">AUP → <span id="fallback-model-label">Sonnet</span></span>
+    </label>
     <button id="rules-btn" class="btn">Rules <span class="pill" id="rules-count">0</span></button>
     <button id="clear-btn" class="btn">Clear</button>
     <span class="status" id="conn-status">connecting…</span>

@@ -13,18 +13,20 @@ type API struct {
 	store       *Store
 	rules       *Rules
 	interceptor *Interceptor
+	fallback    *Fallback
 	proxy       *Proxy
 	ProxyAddr   string
 }
 
-func NewAPI(s *Store, r *Rules, i *Interceptor, p *Proxy) *API {
-	return &API{store: s, rules: r, interceptor: i, proxy: p}
+func NewAPI(s *Store, r *Rules, i *Interceptor, f *Fallback, p *Proxy) *API {
+	return &API{store: s, rules: r, interceptor: i, fallback: f, proxy: p}
 }
 
 func (a *API) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/admin/captures", a.handleCaptures)
 	mux.HandleFunc("/admin/captures/", a.handleCaptureItem)
 	mux.HandleFunc("/admin/intercept", a.handleIntercept)
+	mux.HandleFunc("/admin/fallback", a.handleFallback)
 	mux.HandleFunc("/admin/rules", a.handleRules)
 	mux.HandleFunc("/admin/clear", a.handleClear)
 	mux.HandleFunc("/admin/state", a.handleState)
@@ -144,6 +146,42 @@ type interceptReq struct {
 	Enabled bool `json:"enabled"`
 }
 
+type fallbackReq struct {
+	Enabled bool   `json:"enabled"`
+	Model   string `json:"model"`
+}
+
+func (a *API) handleFallback(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		setJSON(w)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"enabled": a.fallback.Enabled(),
+			"model":   a.fallback.Model(),
+		})
+	case http.MethodPost:
+		var req fallbackReq
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		a.fallback.Set(req.Enabled)
+		if req.Model != "" {
+			a.fallback.SetModel(req.Model)
+		}
+		state := map[string]any{
+			"enabled": a.fallback.Enabled(),
+			"model":   a.fallback.Model(),
+		}
+		setJSON(w)
+		_ = json.NewEncoder(w).Encode(state)
+		payload, _ := json.Marshal(state)
+		a.store.Broadcast(Event{Type: "fallback_toggled", Payload: payload})
+	default:
+		http.Error(w, "method not allowed", 405)
+	}
+}
+
 func (a *API) handleIntercept(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -206,11 +244,13 @@ func (a *API) handleClear(w http.ResponseWriter, r *http.Request) {
 func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	setJSON(w)
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"intercept":  a.interceptor.Enabled(),
-		"pending":    a.interceptor.Pending(),
-		"rules":      a.rules.List(),
-		"upstream":   a.proxy.upstream.String(),
-		"proxy_addr": a.ProxyAddr,
+		"intercept":      a.interceptor.Enabled(),
+		"pending":        a.interceptor.Pending(),
+		"rules":          a.rules.List(),
+		"upstream":       a.proxy.upstream.String(),
+		"proxy_addr":     a.ProxyAddr,
+		"fallback":       a.fallback.Enabled(),
+		"fallback_model": a.fallback.Model(),
 	})
 }
 
@@ -230,12 +270,14 @@ func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	// initial snapshot of state + captures
 	state := map[string]any{
-		"intercept":  a.interceptor.Enabled(),
-		"pending":    a.interceptor.Pending(),
-		"rules":      a.rules.List(),
-		"captures":   json.RawMessage(a.store.SnapshotAll()),
-		"upstream":   a.proxy.upstream.String(),
-		"proxy_addr": a.ProxyAddr,
+		"intercept":      a.interceptor.Enabled(),
+		"pending":        a.interceptor.Pending(),
+		"rules":          a.rules.List(),
+		"captures":       json.RawMessage(a.store.SnapshotAll()),
+		"upstream":       a.proxy.upstream.String(),
+		"proxy_addr":     a.ProxyAddr,
+		"fallback":       a.fallback.Enabled(),
+		"fallback_model": a.fallback.Model(),
 	}
 	statePayload, _ := json.Marshal(state)
 	fmt.Fprintf(w, "event: snapshot\ndata: %s\n\n", statePayload)
