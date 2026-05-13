@@ -20,7 +20,7 @@ type Fallback struct {
 }
 
 func NewFallback() *Fallback {
-	f := &Fallback{model: "claude-sonnet-4-6"}
+	f := &Fallback{model: "claude-opus-4-6"}
 	return f
 }
 

@@ -20,10 +20,10 @@
       <span class="slider"></span>
       <span class="label">Intercept</span>
     </label>
-    <label class="switch" title="On AUP refusal, retry once with Sonnet 4.6">
+    <label class="switch" title="On AUP refusal, retry once with Opus 4.6">
       <input type="checkbox" id="fallback-toggle">
       <span class="slider"></span>
-      <span class="label">AUP → <span id="fallback-model-label">Sonnet</span></span>
+      <span class="label">AUP → <span id="fallback-model-label">Opus</span></span>
     </label>
     <button id="rules-btn" class="btn">Rules <span class="pill" id="rules-count">0</span></button>
     <button id="clear-btn" class="btn">Clear</button>
@@ -189,7 +189,7 @@
     <h3 class="section">What the buttons do</h3>
     <div class="empty-hints">
       <div class="hint"><b>Intercept</b> · pause every request, edit URL/headers/body, then forward or drop.</div>
-      <div class="hint"><b>AUP → Sonnet</b> · auto-retry once with Sonnet 4.6 when the classifier refuses the request. <span class="muted">(One retry only; if Sonnet also refuses, the refusal is forwarded.)</span></div>
+      <div class="hint"><b>AUP → Opus</b> · auto-retry once with Opus 4.6 when the classifier refuses the request. <span class="muted">(One retry only; if Opus also refuses, the refusal is forwarded.)</span></div>
       <div class="hint"><b>Rules</b> · regex match &amp; replace applied automatically to request or response.</div>
       <div class="hint"><b>Replay</b> · clone any captured request, edit, re-send.</div>
       <div class="hint"><b>Clear</b> · wipe all captures from memory.</div>
@@ -199,8 +199,8 @@
     <div class="empty-hints">
       <div class="hint"><span class="legend-swatch swatch-ok"></span> normal completed</div>
       <div class="hint"><span class="legend-swatch swatch-aup"></span> refused by AUP classifier</div>
-      <div class="hint"><span class="legend-swatch swatch-fallback"></span> AUP fallback retry that succeeded (Sonnet served it)</div>
-      <div class="hint"><span class="legend-swatch swatch-fail"></span> AUP fallback retry that itself failed (Sonnet refused / error)</div>
+      <div class="hint"><span class="legend-swatch swatch-fallback"></span> AUP fallback retry that succeeded (Opus served it)</div>
+      <div class="hint"><span class="legend-swatch swatch-fail"></span> AUP fallback retry that itself failed (Opus refused / error)</div>
       <div class="hint">✎ = request body or headers were modified by you or by a rule</div>
       <div class="hint">↻ = manual replay</div>
       <div class="hint">⤴ = AUP fallback retry</div>

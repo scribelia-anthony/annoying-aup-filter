@@ -293,7 +293,7 @@ a { color: var(--accent); }
   content: "⤴ ";
   color: var(--accent);
 }
-/* Fallback that itself failed (4xx/5xx or Sonnet also refused): purple tint */
+/* Fallback that itself failed (4xx/5xx or Opus also refused): purple tint */
 .captures li.fallback-failed {
   background: rgba(180, 139, 255, 0.08);
   border-left: 3px solid var(--purple);
