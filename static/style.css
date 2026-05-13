@@ -277,7 +277,7 @@ a { color: var(--accent); }
 }
 .captures li.fallback-saved .method { color: var(--accent); }
 .captures li.fallback-saved.selected { background: rgba(255,204,102,0.22); }
-.captures li.fallback-saved::before { content: "⤴ "; color: var(--accent); }
+.captures li.fallback-saved::before { content: "\2934\FE0E  "; color: var(--accent); }
 
 .captures li.fallback-failed {
   background: var(--tint-purple);
@@ -285,10 +285,10 @@ a { color: var(--accent); }
 }
 .captures li.fallback-failed .method { color: var(--purple); }
 .captures li.fallback-failed.selected { background: rgba(180,139,255,0.22); }
-.captures li.fallback-failed::before { content: "⤴ "; color: var(--purple); }
+.captures li.fallback-failed::before { content: "\2934\FE0E  "; color: var(--purple); }
 
-.captures li.replay::before { content: "↻ "; color: var(--purple); }
-.captures li.modified::after { content: "✎"; color: var(--accent); margin-left: 4px; }
+.captures li.replay::before { content: "\21BB\FE0E  "; color: var(--purple); }
+.captures li.modified::after { content: "*"; color: var(--accent); margin-left: 4px; font-weight: 700; }
 
 /* ───────── Detail pane ───────── */
 .detail-pane {
