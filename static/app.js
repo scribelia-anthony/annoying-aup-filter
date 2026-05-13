@@ -536,7 +536,7 @@ function connect() {
     state.rules = snap.rules || [];
     state.upstream = snap.upstream || '';
     state.fallback = !!snap.fallback;
-    state.fallbackModel = snap.fallback_model || 'claude-sonnet-4-6';
+    state.fallbackModel = snap.fallback_model || 'claude-opus-4-6';
     const helpUrl = $('help-proxy-url');
     if (helpUrl) {
       helpUrl.textContent = snap.proxy_addr ? `http://${snap.proxy_addr}` : 'http://127.0.0.1:8080';
@@ -625,7 +625,7 @@ function renderAll() {
   $('upstream').textContent = `— upstream: ${state.upstream}`;
   $('intercept-toggle').checked = state.intercept;
   $('fallback-toggle').checked = !!state.fallback;
-  $('fallback-model-label').textContent = shortModel(state.fallbackModel || 'claude-sonnet-4-6');
+  $('fallback-model-label').textContent = shortModel(state.fallbackModel || 'claude-opus-4-6');
   $('rules-count').textContent = (state.rules || []).filter(r => r.enabled).length;
   $('captures').innerHTML = '';
   for (let i = state.order.length - 1; i >= 0; i--) {
