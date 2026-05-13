@@ -1,36 +1,43 @@
-package main
+// Package rules is the match-and-replace engine. Each rule is a compiled
+// RE2 regex that runs against the URL, a named header, or the body of
+// either the request or the response. Empty matches and disabled rules
+// are skipped. Streaming response bodies are processed per chunk — a
+// match that spans a chunk boundary is missed.
+package rules
 
 import (
 	"bytes"
 	"fmt"
 	"regexp"
 	"sync"
+
+	"github.com/scribelia-anthony/prompt-cleaner/internal/id"
 )
 
-type RulePhase string
+type Phase string
 
 const (
-	PhaseRequest  RulePhase = "request"
-	PhaseResponse RulePhase = "response"
+	PhaseRequest  Phase = "request"
+	PhaseResponse Phase = "response"
 )
 
-type RuleTarget string
+type Target string
 
 const (
-	TargetURL    RuleTarget = "url"
-	TargetHeader RuleTarget = "header"
-	TargetBody   RuleTarget = "body"
+	TargetURL    Target = "url"
+	TargetHeader Target = "header"
+	TargetBody   Target = "body"
 )
 
 type Rule struct {
-	ID          string     `json:"id"`
-	Name        string     `json:"name"`
-	Enabled     bool       `json:"enabled"`
-	Phase       RulePhase  `json:"phase"`
-	Target      RuleTarget `json:"target"`
-	HeaderName  string     `json:"header_name,omitempty"`
-	Match       string     `json:"match"`
-	Replacement string     `json:"replacement"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Enabled     bool   `json:"enabled"`
+	Phase       Phase  `json:"phase"`
+	Target      Target `json:"target"`
+	HeaderName  string `json:"header_name,omitempty"`
+	Match       string `json:"match"`
+	Replacement string `json:"replacement"`
 
 	re *regexp.Regexp
 }
@@ -52,7 +59,7 @@ type Rules struct {
 	rules []*Rule
 }
 
-func NewRules() *Rules {
+func New() *Rules {
 	return &Rules{}
 }
 
@@ -71,7 +78,7 @@ func (rs *Rules) Replace(rules []*Rule) error {
 			return err
 		}
 		if r.ID == "" {
-			r.ID = newID()
+			r.ID = id.New()
 		}
 		compiled = append(compiled, r)
 	}
@@ -81,8 +88,8 @@ func (rs *Rules) Replace(rules []*Rule) error {
 	return nil
 }
 
-// ApplyRequest rewrites the URL/headers/body in place using request-phase rules.
-// Returns true if anything was modified.
+// ApplyRequest rewrites URL/headers/body in place using request-phase
+// rules. Returns true if anything was modified.
 func (rs *Rules) ApplyRequest(urlStr *string, headers map[string][]string, body *[]byte) bool {
 	rs.mu.RLock()
 	defer rs.mu.RUnlock()
@@ -155,8 +162,8 @@ func (rs *Rules) ApplyResponseHeaders(headers map[string][]string) bool {
 	return modified
 }
 
-// ApplyResponseBody rewrites a chunk of response body in place.
-// NOTE: matches that span chunk boundaries are missed in streaming responses.
+// ApplyResponseBody rewrites a chunk of response body in place. Matches
+// that span chunk boundaries are missed in streaming responses.
 func (rs *Rules) ApplyResponseBody(body *[]byte) bool {
 	rs.mu.RLock()
 	defer rs.mu.RUnlock()

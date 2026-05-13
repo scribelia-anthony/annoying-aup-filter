@@ -1,4 +1,6 @@
-package main
+// Package intercept pauses an in-flight request until the operator
+// posts a Decision (forward — possibly with edits — or drop).
+package intercept
 
 import (
 	"context"
@@ -28,15 +30,15 @@ type Interceptor struct {
 	pending map[string]chan Decision
 }
 
-func NewInterceptor() *Interceptor {
+func New() *Interceptor {
 	return &Interceptor{pending: make(map[string]chan Decision)}
 }
 
 func (i *Interceptor) Enabled() bool { return i.enabled.Load() }
 func (i *Interceptor) Set(v bool)    { i.enabled.Store(v) }
 
-// Await registers a pending intercepted request and blocks until a decision is
-// posted (via Decide) or the context is cancelled.
+// Await registers a pending intercepted request and blocks until a decision
+// is posted (via Decide) or the context is cancelled.
 func (i *Interceptor) Await(ctx context.Context, id string) (Decision, bool) {
 	ch := make(chan Decision, 1)
 	i.mu.Lock()
@@ -55,8 +57,8 @@ func (i *Interceptor) Await(ctx context.Context, id string) (Decision, bool) {
 	}
 }
 
-// Decide delivers a decision for a pending intercepted request.
-// Returns false if no such pending request exists.
+// Decide delivers a decision for a pending intercepted request. Returns
+// false if no such pending request exists.
 func (i *Interceptor) Decide(id string, d Decision) bool {
 	i.mu.Lock()
 	ch, ok := i.pending[id]

@@ -1,4 +1,9 @@
-package main
+// Package proxy implements the HTTP forwarder between Claude Code and
+// the upstream Anthropic API. It coordinates the capture log, the rule
+// engine, the interceptor pause/forward gate, and the AUP refusal
+// fallback path. Streaming (`text/event-stream`) responses are forwarded
+// chunk by chunk so the client never waits for the full body.
+package proxy
 
 import (
 	"bytes"
@@ -11,14 +16,20 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/scribelia-anthony/prompt-cleaner/internal/fallback"
+	"github.com/scribelia-anthony/prompt-cleaner/internal/id"
+	"github.com/scribelia-anthony/prompt-cleaner/internal/intercept"
+	"github.com/scribelia-anthony/prompt-cleaner/internal/rules"
+	"github.com/scribelia-anthony/prompt-cleaner/internal/store"
 )
 
 type Proxy struct {
 	upstream    *url.URL
-	store       *Store
-	rules       *Rules
-	interceptor *Interceptor
-	fallback    *Fallback
+	store       *store.Store
+	rules       *rules.Rules
+	interceptor *intercept.Interceptor
+	fallback    *fallback.Fallback
 	client      *http.Client
 }
 
@@ -26,7 +37,13 @@ type replayOriginKey struct{}
 type fallbackAttemptKey struct{}
 type fallbackOriginKey struct{}
 
-func NewProxy(upstream string, store *Store, rules *Rules, interceptor *Interceptor, fallback *Fallback) (*Proxy, error) {
+// WithReplayOrigin tags ctx with the id of the capture being replayed.
+// The forwarded request inherits it so the new capture can record the link.
+func WithReplayOrigin(ctx context.Context, originalID string) context.Context {
+	return context.WithValue(ctx, replayOriginKey{}, originalID)
+}
+
+func New(upstream string, st *store.Store, rs *rules.Rules, in *intercept.Interceptor, fb *fallback.Fallback) (*Proxy, error) {
 	u, err := url.Parse(upstream)
 	if err != nil {
 		return nil, err
@@ -36,15 +53,17 @@ func NewProxy(upstream string, store *Store, rules *Rules, interceptor *Intercep
 	}
 	return &Proxy{
 		upstream:    u,
-		store:       store,
-		rules:       rules,
-		interceptor: interceptor,
-		fallback:    fallback,
+		store:       st,
+		rules:       rs,
+		interceptor: in,
+		fallback:    fb,
 		client: &http.Client{
-			Timeout: 0, // streaming responses can run for minutes
+			Timeout: 0, // Streaming responses can run for minutes.
 		},
 	}, nil
 }
+
+func (p *Proxy) Upstream() string { return p.upstream.String() }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
@@ -54,14 +73,14 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = r.Body.Close()
 
-	capID := newID()
+	capID := id.New()
 	now := time.Now()
-	initial := &Capture{
+	initial := &store.Capture{
 		ID:        capID,
 		CreatedAt: now,
 		StartedAt: now,
-		Status:    StatusPending,
-		Request: CapturedRequest{
+		Status:    store.StatusPending,
+		Request: store.CapturedRequest{
 			Method:  r.Method,
 			URL:     r.URL.RequestURI(),
 			Path:    r.URL.Path,
@@ -77,50 +96,50 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	p.store.Add(initial)
 	if snap, ok := p.store.Snapshot(capID); ok {
-		p.store.Broadcast(Event{Type: "capture_started", ID: capID, Payload: snap})
+		p.store.Broadcast(store.Event{Type: "capture_started", ID: capID, Payload: snap})
 	}
 
 	urlStr := initial.Request.URL
 	headers := cloneHeaders(r.Header)
 	bodyCopy := append([]byte(nil), body...)
 	if p.rules.ApplyRequest(&urlStr, headers, &bodyCopy) {
-		snap, _ := p.store.Update(capID, func(c *Capture) {
+		snap, _ := p.store.Update(capID, func(c *store.Capture) {
 			c.Modified = true
 			c.Request.URL = urlStr
 			c.Request.Path = pathOf(urlStr)
 			c.Request.Headers = headers
 			c.Request.Body = string(bodyCopy)
 		})
-		p.store.Broadcast(Event{Type: "capture_updated", ID: capID, Payload: snap})
+		p.store.Broadcast(store.Event{Type: "capture_updated", ID: capID, Payload: snap})
 	}
 
 	if p.interceptor.Enabled() {
-		snap, _ := p.store.Update(capID, func(c *Capture) { c.Status = StatusIntercepted })
-		p.store.Broadcast(Event{Type: "capture_intercepted", ID: capID, Payload: snap})
+		snap, _ := p.store.Update(capID, func(c *store.Capture) { c.Status = store.StatusIntercepted })
+		p.store.Broadcast(store.Event{Type: "capture_intercepted", ID: capID, Payload: snap})
 
 		decision, ok := p.interceptor.Await(r.Context(), capID)
 		if !ok {
-			snap, _ := p.store.Update(capID, func(c *Capture) {
-				c.Status = StatusErrored
+			snap, _ := p.store.Update(capID, func(c *store.Capture) {
+				c.Status = store.StatusErrored
 				c.Error = "client cancelled while intercepted"
 				end := time.Now()
 				c.EndedAt = &end
 			})
-			p.store.Broadcast(Event{Type: "capture_errored", ID: capID, Payload: snap})
+			p.store.Broadcast(store.Event{Type: "capture_errored", ID: capID, Payload: snap})
 			http.Error(w, "intercept cancelled", 499)
 			return
 		}
 		switch decision.Action {
-		case ActionDrop:
-			snap, _ := p.store.Update(capID, func(c *Capture) {
-				c.Status = StatusDropped
+		case intercept.ActionDrop:
+			snap, _ := p.store.Update(capID, func(c *store.Capture) {
+				c.Status = store.StatusDropped
 				end := time.Now()
 				c.EndedAt = &end
 			})
-			p.store.Broadcast(Event{Type: "capture_updated", ID: capID, Payload: snap})
+			p.store.Broadcast(store.Event{Type: "capture_updated", ID: capID, Payload: snap})
 			http.Error(w, "request dropped by interceptor", http.StatusForbidden)
 			return
-		case ActionForward:
+		case intercept.ActionForward:
 			if decision.URL != "" {
 				urlStr = decision.URL
 			}
@@ -128,7 +147,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				headers = decision.Headers
 			}
 			bodyCopy = []byte(decision.Body)
-			snap, _ := p.store.Update(capID, func(c *Capture) {
+			snap, _ := p.store.Update(capID, func(c *store.Capture) {
 				c.Request.URL = urlStr
 				c.Request.Path = pathOf(urlStr)
 				c.Request.Headers = headers
@@ -137,7 +156,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					c.Modified = true
 				}
 			})
-			p.store.Broadcast(Event{Type: "capture_updated", ID: capID, Payload: snap})
+			p.store.Broadcast(store.Event{Type: "capture_updated", ID: capID, Payload: snap})
 		}
 	}
 
@@ -156,8 +175,8 @@ func (p *Proxy) forward(w http.ResponseWriter, ctx context.Context, capID, metho
 	upstreamURL.Path = singleSlashJoin(p.upstream.Path, parsed.Path)
 	upstreamURL.RawQuery = parsed.RawQuery
 
-	snap, _ := p.store.Update(capID, func(c *Capture) { c.Status = StatusForwarded })
-	p.store.Broadcast(Event{Type: "capture_updated", ID: capID, Payload: snap})
+	snap, _ := p.store.Update(capID, func(c *store.Capture) { c.Status = store.StatusForwarded })
+	p.store.Broadcast(store.Event{Type: "capture_updated", ID: capID, Payload: snap})
 
 	req, err := http.NewRequestWithContext(ctx, method, upstreamURL.String(), bytes.NewReader(body))
 	if err != nil {
@@ -189,18 +208,16 @@ func (p *Proxy) forward(w http.ResponseWriter, ctx context.Context, capID, metho
 	ct := resp.Header.Get("Content-Type")
 	streaming := strings.Contains(strings.ToLower(ct), "text/event-stream")
 
-	snap, _ = p.store.Update(capID, func(c *Capture) {
-		c.Response = &CapturedResponse{
+	snap, _ = p.store.Update(capID, func(c *store.Capture) {
+		c.Response = &store.CapturedResponse{
 			Status:    resp.StatusCode,
 			Headers:   respHeaders,
 			Streaming: streaming,
 		}
-		c.Status = StatusStreaming
+		c.Status = store.StatusStreaming
 	})
-	p.store.Broadcast(Event{Type: "response_started", ID: capID, Payload: snap})
+	p.store.Broadcast(store.Event{Type: "response_started", ID: capID, Payload: snap})
 
-	// AUP fallback is only relevant for streaming /v1/messages 200 responses,
-	// and only if we haven't already retried once.
 	_, alreadyFallback := ctx.Value(fallbackAttemptKey{}).(bool)
 	canFallback := p.fallback.Enabled() &&
 		!alreadyFallback &&
@@ -216,8 +233,8 @@ func (p *Proxy) forward(w http.ResponseWriter, ctx context.Context, capID, metho
 	}
 }
 
-// streamPassthrough writes upstream response headers + body directly to w,
-// recording each chunk in the capture as it goes.
+// streamPassthrough writes upstream response headers + body directly to
+// w, recording each chunk in the capture as it goes.
 func (p *Proxy) streamPassthrough(w http.ResponseWriter, capID string, resp *http.Response, respHeaders map[string][]string, started time.Time) {
 	defer resp.Body.Close()
 
@@ -273,18 +290,19 @@ func (p *Proxy) streamPassthrough(w http.ResponseWriter, capID string, resp *htt
 	end := time.Now()
 	durMs := end.Sub(started).Milliseconds()
 	bodyStr := fullBody.String()
-	snap, _ := p.store.Update(capID, func(c *Capture) {
-		c.Status = StatusCompleted
+	snap, _ := p.store.Update(capID, func(c *store.Capture) {
+		c.Status = store.StatusCompleted
 		c.EndedAt = &end
 		c.DurationMs = durMs
 		if c.Response != nil {
 			c.Response.Body = bodyStr
 		}
 	})
-	p.store.Broadcast(Event{Type: "capture_completed", ID: capID, Payload: snap})
+	p.store.Broadcast(store.Event{Type: "capture_completed", ID: capID, Payload: snap})
 }
 
-// consumeChunk applies response rules, writes the chunk to w, and records it in the capture.
+// consumeChunk applies response rules, writes the chunk to w, and records
+// it in the capture.
 func (p *Proxy) consumeChunk(w http.ResponseWriter, flusher http.Flusher, capID string, raw []byte, fullBody *bytes.Buffer) {
 	chunk := append([]byte(nil), raw...)
 	p.rules.ApplyResponseBody(&chunk)
@@ -297,31 +315,29 @@ func (p *Proxy) consumeChunk(w http.ResponseWriter, flusher http.Flusher, capID 
 	}
 
 	fullBody.Write(chunk)
-	sc := StreamChunk{At: time.Now(), Data: string(chunk)}
-	p.store.Update(capID, func(c *Capture) {
+	sc := store.StreamChunk{At: time.Now(), Data: string(chunk)}
+	p.store.Update(capID, func(c *store.Capture) {
 		if c.Response != nil {
 			c.Response.Chunks = append(c.Response.Chunks, sc)
 		}
 	})
 	chunkPayload, _ := json.Marshal(sc)
-	p.store.Broadcast(Event{Type: "response_chunk", ID: capID, Payload: chunkPayload})
+	p.store.Broadcast(store.Event{Type: "response_chunk", ID: capID, Payload: chunkPayload})
 }
 
-// streamWithFallback reads the upstream SSE stream, looking for an early
-// `stop_reason: "refusal"` event. If found, it suppresses the refusal,
-// rewrites the request body to use the configured fallback model, and
-// recurses into forward() with a fallback marker so the new attempt is the
-// final attempt (no second retry).
-//
-// If `content_block_start` arrives before any refusal, we commit to the
-// upstream response: flush the buffered prefix to the client and switch to
-// passthrough streaming for the rest.
+// streamWithFallback reads the upstream SSE stream looking for an early
+// `stop_reason: "refusal"`. If found, it suppresses the refusal, rewrites
+// the request body to use the configured fallback model, and reissues
+// the request with a fallback marker so the new attempt is the final
+// attempt (no second retry). If `content_block_start` arrives before any
+// refusal, we commit to the upstream response: flush the buffered prefix
+// to the client and switch to passthrough streaming for the rest.
 func (p *Proxy) streamWithFallback(
 	w http.ResponseWriter, ctx context.Context, capID, method, urlStr string,
 	headers map[string][]string, body []byte,
 	resp *http.Response, respHeaders map[string][]string, started time.Time,
 ) {
-	const maxPeek = 32 * 1024 // give up the gamble after this much
+	const maxPeek = 32 * 1024 // Give up the gamble after this much.
 
 	var prefix bytes.Buffer
 	var fullBody bytes.Buffer
@@ -333,16 +349,14 @@ func (p *Proxy) streamWithFallback(
 		if n > 0 {
 			prefix.Write(buf[:n])
 			fullBody.Write(buf[:n])
-			// record chunks so the user can see what came back even if we
-			// end up trashing it for the fallback path
-			sc := StreamChunk{At: time.Now(), Data: string(buf[:n])}
-			p.store.Update(capID, func(c *Capture) {
+			sc := store.StreamChunk{At: time.Now(), Data: string(buf[:n])}
+			p.store.Update(capID, func(c *store.Capture) {
 				if c.Response != nil {
 					c.Response.Chunks = append(c.Response.Chunks, sc)
 				}
 			})
 			chunkPayload, _ := json.Marshal(sc)
-			p.store.Broadcast(Event{Type: "response_chunk", ID: capID, Payload: chunkPayload})
+			p.store.Broadcast(store.Event{Type: "response_chunk", ID: capID, Payload: chunkPayload})
 
 			d := classifyStreamPrefix(prefix.Bytes())
 			if d != "" {
@@ -367,25 +381,22 @@ func (p *Proxy) streamWithFallback(
 
 	switch decision {
 	case "refusal":
-		// Don't write anything to the client. Drain the rest of the upstream
-		// body into the capture (it's short — message_delta + message_stop),
-		// then issue the fallback.
 		drainRest(resp.Body, &fullBody, &prefix, p, capID)
 		resp.Body.Close()
 
 		end := time.Now()
 		bodyStr := fullBody.String()
-		snap, _ := p.store.Update(capID, func(c *Capture) {
-			c.Status = StatusAUPRefused
+		snap, _ := p.store.Update(capID, func(c *store.Capture) {
+			c.Status = store.StatusAUPRefused
 			c.EndedAt = &end
 			c.DurationMs = end.Sub(started).Milliseconds()
 			if c.Response != nil {
 				c.Response.Body = bodyStr
 			}
 		})
-		p.store.Broadcast(Event{Type: "capture_completed", ID: capID, Payload: snap})
+		p.store.Broadcast(store.Event{Type: "capture_completed", ID: capID, Payload: snap})
 
-		newBody, newHeaders, err := prepareFallback(body, headers, p.fallback.Model())
+		newBody, newHeaders, err := PrepareFallback(body, headers, p.fallback.Model())
 		if err != nil {
 			log.Printf("fallback (capture=%s): rewrite failed: %v; serving original refusal", capID, err)
 			p.serveBufferedRefusal(w, respHeaders, resp.StatusCode, prefix.Bytes())
@@ -397,15 +408,13 @@ func (p *Proxy) streamWithFallback(
 		newCtx := context.WithValue(ctx, fallbackAttemptKey{}, true)
 		newCtx = context.WithValue(newCtx, fallbackOriginKey{}, capID)
 
-		newID := newID()
-		p.store.Update(capID, func(c *Capture) { c.FallbackTo = newID })
+		newID := id.New()
+		p.store.Update(capID, func(c *store.Capture) { c.FallbackTo = newID })
 
 		p.forwardWithID(w, newCtx, newID, method, urlStr, newHeaders, newBody)
 		return
 
 	case "passthrough":
-		// Real content (or unknown but no refusal seen): flush buffered prefix,
-		// continue streaming the rest.
 		for k, vs := range respHeaders {
 			if isHopByHop(k) || strings.EqualFold(k, "Content-Length") || strings.EqualFold(k, "Content-Encoding") {
 				continue
@@ -420,8 +429,8 @@ func (p *Proxy) streamWithFallback(
 			flusher.Flush()
 		}
 		if prefix.Len() > 0 {
-			// We already recorded these chunks in the store while peeking,
-			// so don't re-record — just send to the client.
+			// Prefix chunks were already recorded while peeking — only send
+			// them to the client now.
 			if _, werr := w.Write(prefix.Bytes()); werr != nil {
 				log.Printf("client write error (capture=%s): %v", capID, werr)
 			}
@@ -429,7 +438,6 @@ func (p *Proxy) streamWithFallback(
 				flusher.Flush()
 			}
 		}
-		// Stream the rest, recording each chunk normally.
 		for {
 			n, rerr := resp.Body.Read(buf)
 			if n > 0 {
@@ -448,15 +456,15 @@ func (p *Proxy) streamWithFallback(
 
 		end := time.Now()
 		bodyStr := fullBody.String()
-		snap, _ := p.store.Update(capID, func(c *Capture) {
-			c.Status = StatusCompleted
+		snap, _ := p.store.Update(capID, func(c *store.Capture) {
+			c.Status = store.StatusCompleted
 			c.EndedAt = &end
 			c.DurationMs = end.Sub(started).Milliseconds()
 			if c.Response != nil {
 				c.Response.Body = bodyStr
 			}
 		})
-		p.store.Broadcast(Event{Type: "capture_completed", ID: capID, Payload: snap})
+		p.store.Broadcast(store.Event{Type: "capture_completed", ID: capID, Payload: snap})
 	}
 }
 
@@ -469,14 +477,14 @@ func drainRest(body io.Reader, fullBody, prefix *bytes.Buffer, p *Proxy, capID s
 		if n > 0 {
 			fullBody.Write(buf[:n])
 			prefix.Write(buf[:n])
-			sc := StreamChunk{At: time.Now(), Data: string(buf[:n])}
-			p.store.Update(capID, func(c *Capture) {
+			sc := store.StreamChunk{At: time.Now(), Data: string(buf[:n])}
+			p.store.Update(capID, func(c *store.Capture) {
 				if c.Response != nil {
 					c.Response.Chunks = append(c.Response.Chunks, sc)
 				}
 			})
 			payload, _ := json.Marshal(sc)
-			p.store.Broadcast(Event{Type: "response_chunk", ID: capID, Payload: payload})
+			p.store.Broadcast(store.Event{Type: "response_chunk", ID: capID, Payload: payload})
 		}
 		if rerr != nil {
 			return
@@ -484,9 +492,10 @@ func drainRest(body io.Reader, fullBody, prefix *bytes.Buffer, p *Proxy, capID s
 	}
 }
 
-// serveBufferedRefusal is the safe-fallback path when we detected a refusal
-// but couldn't proceed with the retry (e.g., model rewrite failed). We just
-// send the upstream refusal back to the client as if nothing happened.
+// serveBufferedRefusal is the safe-fallback path when we detected a
+// refusal but couldn't proceed with the retry (e.g., model rewrite
+// failed). We just send the upstream refusal back to the client as if
+// nothing happened.
 func (p *Proxy) serveBufferedRefusal(w http.ResponseWriter, respHeaders map[string][]string, status int, prefix []byte) {
 	for k, vs := range respHeaders {
 		if isHopByHop(k) || strings.EqualFold(k, "Content-Length") || strings.EqualFold(k, "Content-Encoding") {
@@ -500,23 +509,21 @@ func (p *Proxy) serveBufferedRefusal(w http.ResponseWriter, respHeaders map[stri
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
 	}
-	w.Write(prefix)
+	_, _ = w.Write(prefix)
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
 	}
 }
 
-// classifyStreamPrefix returns "refusal", "passthrough", or "" (need more bytes).
+// classifyStreamPrefix returns "refusal", "passthrough", or "" (need
+// more bytes).
 func classifyStreamPrefix(prefix []byte) string {
 	if bytes.Contains(prefix, []byte(`"stop_reason":"refusal"`)) {
 		return "refusal"
 	}
-	// content_block_start arrives when real content begins
 	if bytes.Contains(prefix, []byte("event: content_block_start")) {
 		return "passthrough"
 	}
-	// Also commit if we see a non-refusal stop_reason early (rare but possible
-	// for empty responses on tool use, etc.)
 	if bytes.Contains(prefix, []byte(`"stop_reason":"end_turn"`)) ||
 		bytes.Contains(prefix, []byte(`"stop_reason":"tool_use"`)) ||
 		bytes.Contains(prefix, []byte(`"stop_reason":"max_tokens"`)) ||
@@ -526,7 +533,7 @@ func classifyStreamPrefix(prefix []byte) string {
 	return ""
 }
 
-// prepareFallback rewrites the request body and headers to make the
+// PrepareFallback rewrites the request body and headers to make the
 // fallback request acceptable to the target model. Returns deep clones
 // (caller can keep using the originals).
 //
@@ -534,12 +541,12 @@ func classifyStreamPrefix(prefix []byte) string {
 //   - body.model → newModel
 //   - body.output_config.effort = "xhigh" → "max"
 //     (Opus 4.7 supports xhigh; Sonnet 4.6 only low/medium/high/max)
-//   - strip Anthropic-Beta tokens that require extra usage tier:
-//     - context-1m-2025-08-07 (1M context window, billed extra)
+//   - strip Anthropic-Beta tokens that require an extra usage tier:
+//   - context-1m-2025-08-07 (1M context window, billed extra)
 //
-// We deliberately leave `thinking`, `context_management`, tools, and all
-// other beta flags untouched — they're cross-model on standard tier.
-func prepareFallback(body []byte, headers map[string][]string, newModel string) ([]byte, map[string][]string, error) {
+// `thinking`, `context_management`, tools, and all other beta flags are
+// left untouched — they are cross-model on the standard tier.
+func PrepareFallback(body []byte, headers map[string][]string, newModel string) ([]byte, map[string][]string, error) {
 	var obj map[string]any
 	if err := json.Unmarshal(body, &obj); err != nil {
 		return nil, nil, err
@@ -596,9 +603,9 @@ func stripBetaTokens(values []string, tokensToRemove ...string) []string {
 	return out
 }
 
-// forwardWithID is forward() but lets the caller fix the capture ID. Used by
-// the fallback path which needs to publish a "fallback_to" link on the
-// original capture *before* starting the new one.
+// forwardWithID is forward() but lets the caller fix the capture ID.
+// Used by the fallback path which needs to publish a "fallback_to" link
+// on the original capture before starting the new one.
 func (p *Proxy) forwardWithID(w http.ResponseWriter, ctx context.Context, fixedID, method, urlStr string, headers map[string][]string, body []byte) {
 	parsed, err := url.Parse(urlStr)
 	if err != nil {
@@ -607,12 +614,12 @@ func (p *Proxy) forwardWithID(w http.ResponseWriter, ctx context.Context, fixedI
 	}
 
 	now := time.Now()
-	initial := &Capture{
+	initial := &store.Capture{
 		ID:        fixedID,
 		CreatedAt: now,
 		StartedAt: now,
-		Status:    StatusPending,
-		Request: CapturedRequest{
+		Status:    store.StatusPending,
+		Request: store.CapturedRequest{
 			Method:  method,
 			URL:     urlStr,
 			Path:    parsed.Path,
@@ -625,7 +632,7 @@ func (p *Proxy) forwardWithID(w http.ResponseWriter, ctx context.Context, fixedI
 	}
 	p.store.Add(initial)
 	if snap, ok := p.store.Snapshot(fixedID); ok {
-		p.store.Broadcast(Event{Type: "capture_started", ID: fixedID, Payload: snap})
+		p.store.Broadcast(store.Event{Type: "capture_started", ID: fixedID, Payload: snap})
 	}
 
 	p.forward(w, ctx, fixedID, method, urlStr, headers, body)
@@ -633,15 +640,15 @@ func (p *Proxy) forwardWithID(w http.ResponseWriter, ctx context.Context, fixedI
 
 func (p *Proxy) failCapture(capID, msg string) {
 	end := time.Now()
-	snap, _ := p.store.Update(capID, func(c *Capture) {
-		c.Status = StatusErrored
+	snap, _ := p.store.Update(capID, func(c *store.Capture) {
+		c.Status = store.StatusErrored
 		c.Error = msg
 		c.EndedAt = &end
 	})
-	p.store.Broadcast(Event{Type: "capture_errored", ID: capID, Payload: snap})
+	p.store.Broadcast(store.Event{Type: "capture_errored", ID: capID, Payload: snap})
 }
 
-func cloneHeaders(h http.Header) map[string][]string {
+func cloneHeaders(h map[string][]string) map[string][]string {
 	out := make(map[string][]string, len(h))
 	for k, vs := range h {
 		out[k] = append([]string(nil), vs...)
