@@ -27,6 +27,7 @@
     </label>
     <button id="rules-btn" class="btn">Rules <span class="pill" id="rules-count">0</span></button>
     <button id="clear-btn" class="btn">Clear</button>
+    <button id="help-btn" class="btn" title="Help">?</button>
     <span class="status" id="conn-status">connecting…</span>
   </div>
 </header>
@@ -42,20 +43,9 @@
 
   <section class="detail-pane">
     <div class="empty" id="empty-pane">
-      <div class="empty-inner">
-        <div class="empty-icon">⏳</div>
-        <h2>Waiting for Claude Code traffic</h2>
-        <p class="muted">Captures will appear in the left panel as soon as Claude Code (or any Anthropic SDK) makes a request through the proxy.</p>
-        <div class="empty-cmd">
-          <span class="muted">In another shell, run:</span>
-          <pre class="code line"><span class="empty-prompt">$</span> export ANTHROPIC_BASE_URL=<span id="empty-proxy-url">http://127.0.0.1:8080</span>
-<span class="empty-prompt">$</span> claude</pre>
-        </div>
-        <div class="empty-hints">
-          <div class="hint"><b>Intercept</b> · top-right toggle pauses every request so you can edit URL, headers, or body before forwarding.</div>
-          <div class="hint"><b>Rules</b> · regex match &amp; replace applied automatically to requests or responses.</div>
-          <div class="hint"><b>Replay</b> · clone any captured request, edit it, send it again.</div>
-        </div>
+      <div class="empty-mini">
+        <span class="muted">No capture selected.</span>
+        <button id="empty-help" class="btn-tiny">? Help</button>
       </div>
     </div>
     <div class="detail" id="detail-pane" hidden>
@@ -180,6 +170,45 @@
       <span class="grow"></span>
       <span class="muted" id="rm-validation"></span>
       <button id="rm-send" class="btn primary">Send replay</button>
+    </div>
+  </div>
+</div>
+
+<!-- Help modal -->
+<div class="modal" id="help-modal" hidden>
+  <div class="modal-content">
+    <div class="modal-head">
+      <h2>prompt-cleaner</h2>
+      <span class="muted">a tiny Burp Suite for Claude Code</span>
+    </div>
+    <h3 class="section">Getting started</h3>
+    <p class="muted">Point Claude Code (or any Anthropic SDK) at the proxy. In another shell:</p>
+    <pre class="code line"><span class="empty-prompt">$</span> export ANTHROPIC_BASE_URL=<span id="help-proxy-url">http://127.0.0.1:8080</span>
+<span class="empty-prompt">$</span> claude</pre>
+
+    <h3 class="section">What the buttons do</h3>
+    <div class="empty-hints">
+      <div class="hint"><b>Intercept</b> · pause every request, edit URL/headers/body, then forward or drop.</div>
+      <div class="hint"><b>AUP → Sonnet</b> · auto-retry once with Sonnet 4.6 when the classifier refuses the request. <span class="muted">(One retry only; if Sonnet also refuses, the refusal is forwarded.)</span></div>
+      <div class="hint"><b>Rules</b> · regex match &amp; replace applied automatically to request or response.</div>
+      <div class="hint"><b>Replay</b> · clone any captured request, edit, re-send.</div>
+      <div class="hint"><b>Clear</b> · wipe all captures from memory.</div>
+    </div>
+
+    <h3 class="section">List item legend</h3>
+    <div class="empty-hints">
+      <div class="hint"><span class="legend-swatch swatch-ok"></span> normal completed</div>
+      <div class="hint"><span class="legend-swatch swatch-aup"></span> refused by AUP classifier</div>
+      <div class="hint"><span class="legend-swatch swatch-fallback"></span> AUP fallback retry that succeeded (Sonnet served it)</div>
+      <div class="hint"><span class="legend-swatch swatch-fail"></span> AUP fallback retry that itself failed (Sonnet refused / error)</div>
+      <div class="hint">✎ = request body or headers were modified by you or by a rule</div>
+      <div class="hint">↻ = manual replay</div>
+      <div class="hint">⤴ = AUP fallback retry</div>
+    </div>
+
+    <div class="modal-actions">
+      <span class="grow"></span>
+      <button id="help-close" class="btn primary">Close</button>
     </div>
   </div>
 </div>

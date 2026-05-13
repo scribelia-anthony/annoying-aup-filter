@@ -329,7 +329,14 @@ a { color: var(--accent); }
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 40px;
+  padding: 20px;
+}
+.empty-mini {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--mono);
+  font-size: 12px;
 }
 .empty-inner {
   max-width: 640px;
@@ -378,6 +385,31 @@ a { color: var(--accent); }
   line-height: 1.5;
 }
 .empty-hints .hint b { color: var(--accent); font-weight: 600; }
+
+/* Help modal section headings + legend swatches */
+h3.section {
+  margin: 18px 0 6px 0;
+  font-size: 11px;
+  color: var(--fg-3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+h3.section:first-of-type { border-top: none; padding-top: 0; }
+
+.legend-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.swatch-ok       { background: rgba(101, 214, 143, 0.4); border-left: 3px solid var(--green); }
+.swatch-aup      { background: rgba(255, 107, 107, 0.4); border-left: 3px solid var(--red); }
+.swatch-fallback { background: rgba(255, 179, 122, 0.4); border-left: 3px solid var(--accent); }
+.swatch-fail     { background: rgba(180, 139, 255, 0.4); border-left: 3px solid var(--purple); }
 
 .detail {
   display: flex;

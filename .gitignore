@@ -13,3 +13,8 @@
 # Go
 *.test
 *.out
+
+# Local rules and config — keep these per-user, never committed
+rules.json
+rules.local.json
+*.local.json

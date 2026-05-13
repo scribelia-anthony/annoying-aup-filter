@@ -38,6 +38,7 @@ Default flags:
 | `-ui-addr`       | `127.0.0.1:8888`              | where the UI + admin API listen        |
 | `-upstream`      | `https://api.anthropic.com`   | where requests are forwarded           |
 | `-max-captures`  | `1000`                        | ring-buffer size for in-memory history |
+| `-rules-file`    | (empty)                       | optional path to a JSON file of rules to load on startup (same format as `PUT /admin/rules`) |
 
 ## Use it with Claude Code
 

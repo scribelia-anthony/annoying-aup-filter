@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"flag"
 	"io/fs"
 	"log"
@@ -21,12 +22,28 @@ func main() {
 	uiAddr := flag.String("ui-addr", "127.0.0.1:8888", "address the UI/admin API listens on")
 	upstream := flag.String("upstream", "https://api.anthropic.com", "upstream API base URL")
 	maxCaptures := flag.Int("max-captures", 1000, "max captures kept in memory (ring buffer)")
+	rulesFile := flag.String("rules-file", "", "optional path to a JSON file with rules to load at startup (same format as PUT /admin/rules)")
 	flag.Parse()
 
 	store := NewStore(*maxCaptures)
 	rules := NewRules()
 	interceptor := NewInterceptor()
 	fallback := NewFallback()
+
+	if *rulesFile != "" {
+		data, err := os.ReadFile(*rulesFile)
+		if err != nil {
+			log.Fatalf("rules-file: %v", err)
+		}
+		var loaded []*Rule
+		if err := json.Unmarshal(data, &loaded); err != nil {
+			log.Fatalf("rules-file: parse: %v", err)
+		}
+		if err := rules.Replace(loaded); err != nil {
+			log.Fatalf("rules-file: compile: %v", err)
+		}
+		log.Printf("[rules] loaded %d rule(s) from %s", len(loaded), *rulesFile)
+	}
 
 	proxy, err := NewProxy(*upstream, store, rules, interceptor, fallback)
 	if err != nil {
