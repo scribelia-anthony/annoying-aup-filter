@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Prompt Cleaner — Claude Code Proxy</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="dot"></span>
+    <span class="title">prompt-cleaner</span>
+    <span class="subtitle" id="upstream">— upstream: …</span>
+  </div>
+  <div class="toolbar">
+    <label class="switch">
+      <input type="checkbox" id="intercept-toggle">
+      <span class="slider"></span>
+      <span class="label">Intercept</span>
+    </label>
+    <button id="rules-btn" class="btn">Rules <span class="pill" id="rules-count">0</span></button>
+    <button id="clear-btn" class="btn">Clear</button>
+    <span class="status" id="conn-status">connecting…</span>
+  </div>
+</header>
+
+<main class="main">
+  <aside class="list-pane">
+    <div class="list-toolbar">
+      <input id="filter" class="filter" placeholder="filter (method, path, status, body…)">
+      <span class="count" id="capture-count">0</span>
+    </div>
+    <ol id="captures" class="captures"></ol>
+  </aside>
+
+  <section class="detail-pane">
+    <div class="empty" id="empty-pane">Select a capture on the left.</div>
+    <div class="detail" id="detail-pane" hidden>
+      <div class="detail-head">
+        <span class="badge method" id="d-method"></span>
+        <span class="d-url" id="d-url"></span>
+        <span class="badge status" id="d-status"></span>
+        <span class="d-time" id="d-time"></span>
+        <span class="grow"></span>
+        <button id="replay-btn" class="btn">Replay…</button>
+      </div>
+      <div class="tabs">
+        <button data-tab="req" class="tab active">Request</button>
+        <button data-tab="resp" class="tab">Response</button>
+        <button data-tab="raw" class="tab">Raw JSON</button>
+      </div>
+      <div class="tab-content">
+        <div class="tab-pane" id="tab-req">
+          <h3>Request line</h3>
+          <pre class="code line" id="req-line"></pre>
+          <h3>Headers <span class="muted" id="req-headers-count"></span></h3>
+          <table class="kv" id="req-headers"></table>
+          <h3>Body <span class="muted" id="req-body-info"></span></h3>
+          <pre class="code body" id="req-body"></pre>
+        </div>
+        <div class="tab-pane" id="tab-resp" hidden>
+          <h3>Status</h3>
+          <pre class="code line" id="resp-line"></pre>
+          <h3>Headers <span class="muted" id="resp-headers-count"></span></h3>
+          <table class="kv" id="resp-headers"></table>
+          <h3>Body / Stream <span class="muted" id="resp-body-info"></span></h3>
+          <pre class="code body" id="resp-body"></pre>
+        </div>
+        <div class="tab-pane" id="tab-raw" hidden>
+          <pre class="code body" id="raw-json"></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- Intercept modal -->
+<div class="modal" id="intercept-modal" hidden>
+  <div class="modal-content wide">
+    <div class="modal-head">
+      <h2>Intercepted request</h2>
+      <span class="modal-id" id="im-id"></span>
+    </div>
+    <div class="field">
+      <label>URL (path + query)</label>
+      <input type="text" id="im-url">
+    </div>
+    <div class="field">
+      <label>Headers (JSON object: name → [values])</label>
+      <textarea id="im-headers" rows="6" class="code"></textarea>
+    </div>
+    <div class="field">
+      <label>Body</label>
+      <textarea id="im-body" rows="16" class="code"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button id="im-drop" class="btn danger">Drop</button>
+      <span class="grow"></span>
+      <button id="im-forward-orig" class="btn">Forward unchanged</button>
+      <button id="im-forward-mod" class="btn primary">Forward modified</button>
+    </div>
+  </div>
+</div>
+
+<!-- Rules modal -->
+<div class="modal" id="rules-modal" hidden>
+  <div class="modal-content wide">
+    <div class="modal-head">
+      <h2>Match &amp; Replace Rules</h2>
+      <span class="muted">Regex applied at proxy time. Body rules apply per-chunk for streaming responses.</span>
+    </div>
+    <table class="rules-table" id="rules-table">
+      <thead>
+        <tr>
+          <th></th><th>Name</th><th>Phase</th><th>Target</th><th>Header</th><th>Match (regex)</th><th>Replacement</th><th></th>
+        </tr>
+      </thead>
+      <tbody id="rules-body"></tbody>
+    </table>
+    <div class="modal-actions">
+      <button id="rules-add" class="btn">+ Add rule</button>
+      <span class="grow"></span>
+      <button id="rules-cancel" class="btn">Cancel</button>
+      <button id="rules-save" class="btn primary">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Replay modal -->
+<div class="modal" id="replay-modal" hidden>
+  <div class="modal-content wide">
+    <div class="modal-head">
+      <h2>Replay request</h2>
+      <span class="modal-id" id="rm-from"></span>
+    </div>
+    <div class="field">
+      <label>Method</label>
+      <input type="text" id="rm-method">
+    </div>
+    <div class="field">
+      <label>URL (path + query)</label>
+      <input type="text" id="rm-url">
+    </div>
+    <div class="field">
+      <label>Headers (JSON)</label>
+      <textarea id="rm-headers" rows="6" class="code"></textarea>
+    </div>
+    <div class="field">
+      <label>Body</label>
+      <textarea id="rm-body" rows="14" class="code"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button id="rm-cancel" class="btn">Cancel</button>
+      <span class="grow"></span>
+      <button id="rm-send" class="btn primary">Send replay</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

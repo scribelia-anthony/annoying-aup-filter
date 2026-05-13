@@ -1,0 +1,15 @@
+# Compiled binary
+/prompt-cleaner
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+
+# Go
+*.test
+*.out
