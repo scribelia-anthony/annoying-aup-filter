@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"syscall"
 	"time"
@@ -54,18 +55,35 @@ func main() {
 	fb := fallback.New()
 
 	if *rulesFile != "" {
-		data, err := os.ReadFile(*rulesFile)
-		if err != nil {
+		if data, err := os.ReadFile(*rulesFile); err == nil {
+			var loaded []*rules.Rule
+			if err := json.Unmarshal(data, &loaded); err != nil {
+				log.Fatalf("rules-file: parse: %v", err)
+			}
+			if err := rs.Replace(loaded); err != nil {
+				log.Fatalf("rules-file: compile: %v", err)
+			}
+			log.Printf("[rules] loaded %d rule(s) from %s", len(loaded), *rulesFile)
+		} else if !os.IsNotExist(err) {
 			log.Fatalf("rules-file: %v", err)
+		} else {
+			log.Printf("[rules] %s not present yet — will be created on first save", *rulesFile)
 		}
-		var loaded []*rules.Rule
-		if err := json.Unmarshal(data, &loaded); err != nil {
-			log.Fatalf("rules-file: parse: %v", err)
+		rs.SetPath(*rulesFile)
+
+		// Persist fallback and intercept toggles next to the rules file so
+		// the whole runtime configuration survives a restart.
+		stateDir := filepath.Dir(*rulesFile)
+		fb.SetPath(filepath.Join(stateDir, "fallback.json"))
+		in.SetPath(filepath.Join(stateDir, "intercept.json"))
+		fb.Load()
+		in.Load()
+		if fb.Enabled() {
+			log.Printf("[fallback] restored: enabled, model=%s", fb.Model())
 		}
-		if err := rs.Replace(loaded); err != nil {
-			log.Fatalf("rules-file: compile: %v", err)
+		if in.Enabled() {
+			log.Printf("[intercept] restored: enabled")
 		}
-		log.Printf("[rules] loaded %d rule(s) from %s", len(loaded), *rulesFile)
 	}
 
 	px, err := proxy.New(*upstream, st, rs, in, fb)
@@ -79,6 +97,7 @@ func main() {
 		Addr:              *proxyAddr,
 		Handler:           proxyMux,
 		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
 	}
 
 	uiMux := http.NewServeMux()
@@ -90,6 +109,7 @@ func main() {
 		Addr:              *uiAddr,
 		Handler:           uiMux,
 		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
 	}
 
 	go func() {
