@@ -6,7 +6,7 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -48,7 +48,7 @@ func (a *API) handleCaptures(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setJSON(w)
-	_, _ = w.Write(a.store.SnapshotAll())
+	_, _ = w.Write(a.store.SnapshotAllSummaries())
 }
 
 func (a *API) handleCaptureItem(w http.ResponseWriter, r *http.Request) {
@@ -256,16 +256,24 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// sseWriteTimeout bounds every individual SSE write so a half-open
+// client (Chrome tab killed, network suspended, …) cannot wedge a
+// goroutine on Write forever. Picked larger than a normal flush latency
+// but small enough that a dead connection drops within seconds.
+const sseWriteTimeout = 5 * time.Second
+
 func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "streaming not supported", 500)
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
+
+	rc := http.NewResponseController(w)
 
 	ch := a.store.Subscribe()
 	defer a.store.Unsubscribe(ch)
@@ -274,15 +282,16 @@ func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 		"intercept":      a.interceptor.Enabled(),
 		"pending":        a.interceptor.Pending(),
 		"rules":          a.rules.List(),
-		"captures":       a.store.SnapshotAll(),
+		"captures":       a.store.SnapshotAllSummaries(),
 		"upstream":       a.proxy.Upstream(),
 		"proxy_addr":     a.ProxyAddr,
 		"fallback":       a.fallback.Enabled(),
 		"fallback_model": a.fallback.Model(),
 	}
 	statePayload, _ := json.Marshal(state)
-	_, _ = fmt.Fprintf(w, "event: snapshot\ndata: %s\n\n", statePayload)
-	flusher.Flush()
+	if err := writeSSE(rc, w, flusher, []byte("event: snapshot\ndata: "), statePayload, []byte("\n\n")); err != nil {
+		return
+	}
 
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
@@ -294,15 +303,34 @@ func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			data, _ := json.Marshal(ev)
-			_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
-			flusher.Flush()
+			if err := writeSSE(rc, w, flusher, []byte("data: "), data, []byte("\n\n")); err != nil {
+				return
+			}
 		case <-ticker.C:
-			_, _ = fmt.Fprint(w, ": heartbeat\n\n")
-			flusher.Flush()
+			if err := writeSSE(rc, w, flusher, []byte(": heartbeat\n\n")); err != nil {
+				return
+			}
 		case <-r.Context().Done():
 			return
 		}
 	}
+}
+
+// writeSSE serialises one SSE record under a per-write deadline so a
+// dead client trips an error instead of pinning the goroutine. Any
+// write or flush error returns immediately — the caller drops the
+// connection and the surrounding defer cleans up the subscriber.
+func writeSSE(rc *http.ResponseController, w http.ResponseWriter, flusher http.Flusher, parts ...[]byte) error {
+	if err := rc.SetWriteDeadline(time.Now().Add(sseWriteTimeout)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		return err
+	}
+	for _, p := range parts {
+		if _, err := w.Write(p); err != nil {
+			return err
+		}
+	}
+	flusher.Flush()
+	return nil
 }
 
 type replayReq struct {
