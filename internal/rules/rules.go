@@ -8,10 +8,12 @@ package rules
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"regexp"
 	"sync"
 
 	"github.com/scribelia-anthony/prompt-cleaner/internal/id"
+	"github.com/scribelia-anthony/prompt-cleaner/internal/persist"
 )
 
 type Phase string
@@ -57,10 +59,20 @@ func (r *Rule) compile() error {
 type Rules struct {
 	mu    sync.RWMutex
 	rules []*Rule
+	path  string
 }
 
 func New() *Rules {
 	return &Rules{}
+}
+
+// SetPath wires the JSON file used both as the load source (handled by the
+// caller at startup) and as the destination for persistence on every
+// Replace(). Empty path disables persistence.
+func (rs *Rules) SetPath(p string) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	rs.path = p
 }
 
 func (rs *Rules) List() []*Rule {
@@ -83,8 +95,17 @@ func (rs *Rules) Replace(rules []*Rule) error {
 		compiled = append(compiled, r)
 	}
 	rs.mu.Lock()
-	defer rs.mu.Unlock()
 	rs.rules = compiled
+	path := rs.path
+	snapshot := make([]*Rule, len(compiled))
+	copy(snapshot, compiled)
+	rs.mu.Unlock()
+
+	if path != "" {
+		if err := persist.WriteJSON(path, snapshot); err != nil {
+			log.Printf("[rules] persist to %s failed: %v", path, err)
+		}
+	}
 	return nil
 }
 

@@ -20,7 +20,12 @@ coverage.html
 # Local rules and config — per-user, never committed
 rules.json
 rules.local.json
+fallback.json
+intercept.json
 *.local.json
+
+# Runtime logs
+*.log
 
 # Tooling caches
 .openclaude/
