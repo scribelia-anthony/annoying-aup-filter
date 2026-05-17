@@ -296,6 +296,7 @@ func (p *Proxy) streamPassthrough(w http.ResponseWriter, capID string, resp *htt
 		c.DurationMs = durMs
 		if c.Response != nil {
 			c.Response.Body = bodyStr
+			c.Response.Chunks = nil // Body now holds the joined stream; drop the per-chunk slice to halve memory.
 		}
 	})
 	p.store.Broadcast(store.Event{Type: "capture_completed", ID: capID, Payload: snap})
@@ -316,7 +317,7 @@ func (p *Proxy) consumeChunk(w http.ResponseWriter, flusher http.Flusher, capID 
 
 	fullBody.Write(chunk)
 	sc := store.StreamChunk{At: time.Now(), Data: string(chunk)}
-	p.store.Update(capID, func(c *store.Capture) {
+	p.store.Mutate(capID, func(c *store.Capture) {
 		if c.Response != nil {
 			c.Response.Chunks = append(c.Response.Chunks, sc)
 		}
@@ -337,7 +338,9 @@ func (p *Proxy) streamWithFallback(
 	headers map[string][]string, body []byte,
 	resp *http.Response, respHeaders map[string][]string, started time.Time,
 ) {
-	const maxPeek = 32 * 1024 // Give up the gamble after this much.
+	const maxPeek = 256 * 1024 // Give up the gamble after this much. Opus 4.x
+	// can emit very long `thinking` blocks before deciding to refuse, so we
+	// need a generous peek window to give the fallback a real chance.
 
 	var prefix bytes.Buffer
 	var fullBody bytes.Buffer
@@ -350,7 +353,7 @@ func (p *Proxy) streamWithFallback(
 			prefix.Write(buf[:n])
 			fullBody.Write(buf[:n])
 			sc := store.StreamChunk{At: time.Now(), Data: string(buf[:n])}
-			p.store.Update(capID, func(c *store.Capture) {
+			p.store.Mutate(capID, func(c *store.Capture) {
 				if c.Response != nil {
 					c.Response.Chunks = append(c.Response.Chunks, sc)
 				}
@@ -409,7 +412,7 @@ func (p *Proxy) streamWithFallback(
 		newCtx = context.WithValue(newCtx, fallbackOriginKey{}, capID)
 
 		newID := id.New()
-		p.store.Update(capID, func(c *store.Capture) { c.FallbackTo = newID })
+		p.store.Mutate(capID, func(c *store.Capture) { c.FallbackTo = newID })
 
 		p.forwardWithID(w, newCtx, newID, method, urlStr, newHeaders, newBody)
 		return
@@ -478,7 +481,7 @@ func drainRest(body io.Reader, fullBody, prefix *bytes.Buffer, p *Proxy, capID s
 			fullBody.Write(buf[:n])
 			prefix.Write(buf[:n])
 			sc := store.StreamChunk{At: time.Now(), Data: string(buf[:n])}
-			p.store.Update(capID, func(c *store.Capture) {
+			p.store.Mutate(capID, func(c *store.Capture) {
 				if c.Response != nil {
 					c.Response.Chunks = append(c.Response.Chunks, sc)
 				}
@@ -517,11 +520,18 @@ func (p *Proxy) serveBufferedRefusal(w http.ResponseWriter, respHeaders map[stri
 
 // classifyStreamPrefix returns "refusal", "passthrough", or "" (need
 // more bytes).
+//
+// A `thinking` content block is NOT a commitment — Opus 4.x routinely
+// thinks, then refuses. Only `text` / `tool_use` blocks (and their deltas)
+// signal that the model committed to a real response.
 func classifyStreamPrefix(prefix []byte) string {
 	if bytes.Contains(prefix, []byte(`"stop_reason":"refusal"`)) {
 		return "refusal"
 	}
-	if bytes.Contains(prefix, []byte("event: content_block_start")) {
+	if bytes.Contains(prefix, []byte(`"content_block":{"type":"text"`)) ||
+		bytes.Contains(prefix, []byte(`"content_block":{"type":"tool_use"`)) ||
+		bytes.Contains(prefix, []byte(`"type":"text_delta"`)) ||
+		bytes.Contains(prefix, []byte(`"type":"input_json_delta"`)) {
 		return "passthrough"
 	}
 	if bytes.Contains(prefix, []byte(`"stop_reason":"end_turn"`)) ||
