@@ -114,6 +114,22 @@ func (s *Store) Update(id string, fn func(*Capture)) (json.RawMessage, bool) {
 	return data, true
 }
 
+// Mutate is Update without the snapshot marshal — for hot paths (per-chunk
+// streaming appends) where the caller does not need a full snapshot and a
+// per-chunk marshal of the whole capture would be O(N²).
+func (s *Store) Mutate(id string, fn func(*Capture)) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.captures[id]
+	if !ok {
+		return false
+	}
+	if fn != nil {
+		fn(c)
+	}
+	return true
+}
+
 func (s *Store) Snapshot(id string) (json.RawMessage, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -149,6 +165,38 @@ func (s *Store) SnapshotAll() json.RawMessage {
 	return data
 }
 
+// SnapshotAllSummaries returns a JSON array of every capture with the
+// heavy fields (request.body, response.body, response.chunks) elided.
+// Full detail remains available via Snapshot(id) on demand.
+//
+// Marshalling the full ring buffer with bodies is O(total captured
+// bytes); under a 1000-capture ring with multi-MB streaming responses
+// this can allocate gigabytes of JSON while holding the store lock,
+// blocking every writer and driving the proxy OOM. Summaries keep the
+// lock hold proportional to capture count, not payload size.
+func (s *Store) SnapshotAllSummaries() json.RawMessage {
+	s.mu.RLock()
+	list := make([]*Capture, 0, len(s.order))
+	for _, id := range s.order {
+		c := s.captures[id]
+		if c == nil {
+			continue
+		}
+		cc := *c
+		cc.Request.Body = ""
+		if c.Response != nil {
+			rr := *c.Response
+			rr.Body = ""
+			rr.Chunks = nil
+			cc.Response = &rr
+		}
+		list = append(list, &cc)
+	}
+	s.mu.RUnlock()
+	data, _ := json.Marshal(list)
+	return data
+}
+
 func (s *Store) Clear() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -162,6 +210,15 @@ func (s *Store) Subscribe() chan Event {
 	s.subs[ch] = struct{}{}
 	s.subsMu.Unlock()
 	return ch
+}
+
+// SubsCount returns the number of live SSE subscribers. Useful for
+// tests and operational metrics — a goroutine leak in handleEvents
+// shows up here as monotonic growth.
+func (s *Store) SubsCount() int {
+	s.subsMu.RLock()
+	defer s.subsMu.RUnlock()
+	return len(s.subs)
 }
 
 func (s *Store) Unsubscribe(ch chan Event) {
