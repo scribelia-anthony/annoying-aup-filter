@@ -3,6 +3,8 @@
 'use strict';
 
 // ─── State ──────────────────────────────────────────────────────────
+const MAX_LIST_ITEMS = 30; // bound DOM regardless of ring buffer size
+
 const state = {
   captures: new Map(),
   order: [],
@@ -14,6 +16,14 @@ const state = {
   rulesDraft: [],
   interceptModalFor: null,
   interceptQueue: [],
+  listItems: new Map(), // id → <li> currently in the DOM, O(1) lookup
+  // Captures from the initial /events snapshot arrive without bodies
+  // (server returns summaries to avoid GB-scale marshals under lock).
+  // We lazy-fetch the full payload on selection. Live SSE events
+  // (capture_started, _updated, _completed, …) carry the full payload,
+  // so anything seen via those is already complete.
+  fullyLoaded: new Set(),
+  detailFetches: new Map(), // id → in-flight promise, to dedupe
 };
 
 let imEditor = null;
@@ -267,7 +277,10 @@ function createBodyEditor(hostId, bodyText, opts = {}) {
 
   function renderMessages() {
     messagesList.innerHTML = '';
+    const total = body.messages.length;
+    const OPEN_LAST = 5; // only auto-expand the tail; older history stays collapsed
     body.messages.forEach((m, mi) => {
+      const openByDefault = mi >= total - OPEN_LAST;
       const card = renderMessageCard(m, mi, readOnly, () => {
         updateMessagesSummary();
       }, () => {
@@ -275,7 +288,7 @@ function createBodyEditor(hostId, bodyText, opts = {}) {
         body.messages.splice(mi, 1);
         renderMessages();
         updateMessagesSummary();
-      });
+      }, openByDefault);
       messagesList.appendChild(card);
     });
     if (!readOnly) {
@@ -384,7 +397,7 @@ function normalizeSystem(sys) {
   return { kind: 'absent' };
 }
 
-function renderMessageCard(message, idx, readOnly, onChange, onRemove) {
+function renderMessageCard(message, idx, readOnly, onChange, onRemove, openByDefault) {
   const card = el('div', { class: 'message-card', data: { role: message.role || 'user' } });
 
   // Normalize content into array of blocks for editing convenience
@@ -407,14 +420,17 @@ function renderMessageCard(message, idx, readOnly, onChange, onRemove) {
   if (otherTypes.length) summaryParts.push(otherTypes.join(', '));
   const totalLen = JSON.stringify(blocks).length;
 
+  const caret = el('span', { class: 'message-caret' }, openByDefault ? '▼' : '▶');
   const head = el('div', { class: 'message-head' },
+    caret,
     el('span', { class: 'message-role' }, `#${idx} ${message.role || '?'}`),
     el('span', { class: 'message-summary' }, `· ${summaryParts.join(' · ') || 'empty'} · ${fmtBytes(totalLen)}`),
     el('span', { class: 'message-actions' },
       !readOnly ? el('button', {
         class: 'icon-btn',
         title: 'switch role',
-        onclick: () => {
+        onclick: (ev) => {
+          ev.stopPropagation();
           message.role = (message.role === 'user') ? 'assistant' : 'user';
           card.dataset.role = message.role;
           head.querySelector('.message-role').textContent = `#${idx} ${message.role}`;
@@ -424,31 +440,44 @@ function renderMessageCard(message, idx, readOnly, onChange, onRemove) {
       !readOnly ? el('button', {
         class: 'icon-btn',
         title: '+ text block',
-        onclick: () => {
+        onclick: (ev) => {
+          ev.stopPropagation();
           blocks.push({ type: 'text', text: '' });
-          renderBlocks();
+          ensureRendered(true);
           onChange?.();
         },
       }, '+text') : null,
       !readOnly ? el('button', {
         class: 'icon-btn danger',
         title: 'remove message',
-        onclick: () => onRemove?.(),
+        onclick: (ev) => { ev.stopPropagation(); onRemove?.(); },
       }, '✕') : null,
     ),
   );
+  head.style.cursor = 'pointer';
   card.appendChild(head);
 
   const body = el('div', { class: 'message-body' });
+  body.hidden = !openByDefault;
   card.appendChild(body);
 
-  function renderBlocks() {
+  let rendered = false;
+  function ensureRendered(force) {
+    if (rendered && !force) return;
     body.innerHTML = '';
     blocks.forEach((b, bi) => {
       body.appendChild(renderContentBlock(b, bi, blocks, readOnly, () => onChange?.()));
     });
+    rendered = true;
   }
-  renderBlocks();
+  if (openByDefault) ensureRendered();
+
+  head.addEventListener('click', (ev) => {
+    if (ev.target.closest('button')) return;
+    body.hidden = !body.hidden;
+    caret.textContent = body.hidden ? '▶' : '▼';
+    if (!body.hidden) ensureRendered();
+  });
 
   return card;
 }
@@ -543,6 +572,8 @@ function connect() {
     }
     state.captures.clear();
     state.order = [];
+    state.fullyLoaded.clear();
+    state.detailFetches.clear();
     for (const c of (snap.captures || [])) {
       state.captures.set(c.id, c);
       state.order.push(c.id);
@@ -572,6 +603,7 @@ function handleEvent(ev) {
       const cap = ev.payload;
       if (!state.captures.has(cap.id)) state.order.push(cap.id);
       state.captures.set(cap.id, cap);
+      state.fullyLoaded.add(cap.id);
       renderListItem(cap);
       if (state.selectedId === cap.id) renderDetail(cap);
       updateCount();
@@ -582,6 +614,7 @@ function handleEvent(ev) {
       const cap = ev.payload;
       if (!state.captures.has(cap.id)) state.order.push(cap.id);
       state.captures.set(cap.id, cap);
+      state.fullyLoaded.add(cap.id);
       renderListItem(cap);
       if (state.selectedId === cap.id) renderDetail(cap);
       openInterceptModal(cap);
@@ -600,6 +633,8 @@ function handleEvent(ev) {
     case 'captures_cleared':
       state.captures.clear();
       state.order = [];
+      state.fullyLoaded.clear();
+      state.detailFetches.clear();
       state.selectedId = null;
       renderAll();
       break;
@@ -628,9 +663,13 @@ function renderAll() {
   $('fallback-model-label').textContent = shortModel(state.fallbackModel || 'claude-opus-4-6');
   $('rules-count').textContent = (state.rules || []).filter(r => r.enabled).length;
   $('captures').innerHTML = '';
-  for (let i = state.order.length - 1; i >= 0; i--) {
+  state.listItems.clear();
+  let shown = 0;
+  for (let i = state.order.length - 1; i >= 0 && shown < MAX_LIST_ITEMS; i--) {
     const cap = state.captures.get(state.order[i]);
-    if (cap) renderListItem(cap);
+    if (!cap || !captureMatches(cap, state.filter)) continue;
+    renderListItem(cap);
+    shown++;
   }
   updateCount();
   if (state.selectedId && state.captures.has(state.selectedId)) {
@@ -643,8 +682,15 @@ function renderAll() {
 
 function updateCount() {
   const total = state.captures.size;
-  const shown = filteredIds().length;
-  $('capture-count').textContent = shown === total ? `${total}` : `${shown}/${total}`;
+  const matching = filteredIds().length;
+  const inDom = state.listItems.size;
+  let txt;
+  if (inDom < matching) {
+    txt = matching === total ? `${inDom}/${total}` : `${inDom}/${matching} of ${total}`;
+  } else {
+    txt = matching === total ? `${total}` : `${matching}/${total}`;
+  }
+  $('capture-count').textContent = txt;
 }
 
 function captureMatches(cap, q) {
@@ -665,9 +711,31 @@ function filteredIds() {
 }
 
 function renderListItem(cap) {
-  const existing = document.querySelector(`#captures li[data-id="${cap.id}"]`);
-  const li = existing || el('li', { data: { id: cap.id }, onclick: () => selectCapture(cap.id) });
+  const matches = captureMatches(cap, state.filter);
+  let li = state.listItems.get(cap.id);
 
+  if (li && !matches) {
+    li.remove();
+    state.listItems.delete(cap.id);
+    return;
+  }
+  if (!li && !matches) return;
+
+  const isNew = !li;
+  if (isNew) {
+    li = el('li', { data: { id: cap.id }, onclick: () => selectCapture(cap.id) });
+  }
+  populateListItem(li, cap);
+
+  if (isNew) {
+    const list = $('captures');
+    list.insertBefore(li, list.firstChild);
+    state.listItems.set(cap.id, li);
+    pruneListItems();
+  }
+}
+
+function populateListItem(li, cap) {
   li.innerHTML = '';
   li.className = '';
   if (state.selectedId === cap.id) li.classList.add('selected');
@@ -684,7 +752,6 @@ function renderListItem(cap) {
   const path = cap.request?.path || cap.request?.url || '?';
   const status = cap.response?.status ? String(cap.response.status) : (cap.status || '—');
 
-  // Top line: method + path + short status
   li.appendChild(el('span', { class: 'method' }, method));
   li.appendChild(el('span', { class: 'path', title: path }, summarizePath(cap)));
 
@@ -695,7 +762,6 @@ function renderListItem(cap) {
   else                                  metaTop = cap.status?.slice(0,4) || '—';
   li.appendChild(el('span', { class: 'meta st-' + (cap.status || 'pending') }, metaTop));
 
-  // Sub line: timestamp + model/duration/markers
   const subParts = [];
   if (cap.started_at) subParts.push(fmtClock(cap.started_at));
   if (cap.duration_ms != null && cap.duration_ms > 0) subParts.push(fmtMs(cap.duration_ms));
@@ -703,14 +769,15 @@ function renderListItem(cap) {
   if (m) subParts.push(shortModel(m));
   if (cap.modified) subParts.push('✎');
   if (subParts.length) li.appendChild(el('span', { class: 'sub' }, subParts.join(' · ')));
+}
 
-  if (!existing) {
-    const list = $('captures');
-    if (captureMatches(cap, state.filter)) {
-      list.insertBefore(li, list.firstChild);
-    }
-  } else if (!captureMatches(cap, state.filter)) {
-    li.remove();
+function pruneListItems() {
+  const list = $('captures');
+  while (list.children.length > MAX_LIST_ITEMS) {
+    const last = list.lastElementChild;
+    if (!last) break;
+    state.listItems.delete(last.dataset.id);
+    last.remove();
   }
 }
 
@@ -718,13 +785,61 @@ function selectCapture(id) {
   state.selectedId = id;
   document.querySelectorAll('#captures li').forEach(li => li.classList.toggle('selected', li.dataset.id === id));
   const cap = state.captures.get(id);
-  if (cap) renderDetail(cap);
+  if (!cap) return;
+  renderDetail(cap);
+  if (!state.fullyLoaded.has(id)) ensureFullCapture(id);
+}
+
+function ensureFullCapture(id) {
+  if (state.fullyLoaded.has(id)) return state.detailFetches.get(id) || Promise.resolve(state.captures.get(id));
+  let p = state.detailFetches.get(id);
+  if (p) return p;
+  p = fetch(`/admin/captures/${id}`).then(async (r) => {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const full = await r.json();
+    state.captures.set(id, full);
+    state.fullyLoaded.add(id);
+    if (state.selectedId === id) renderDetail(full);
+    return full;
+  }).catch((err) => {
+    console.error('detail fetch failed', id, err);
+    throw err;
+  }).finally(() => {
+    state.detailFetches.delete(id);
+  });
+  state.detailFetches.set(id, p);
+  return p;
+}
+
+// Tracks which capture id is currently rendered into each tab pane, so a
+// tab switch only re-renders when the content is stale. Building the
+// structured request editor and JSON-highlighting the raw capture are both
+// expensive (multi-MB DOM for long Claude Code conversations).
+const renderedFor = { req: null, resp: null, raw: null };
+
+function activeTab() {
+  return document.querySelector('.tab.active')?.dataset.tab || 'req';
 }
 
 function renderDetail(cap) {
   $('empty-pane').hidden = true;
   $('detail-pane').hidden = false;
+  renderDetailMeta(cap);
+  // Stale: incoming updates for the selected capture invalidate the inactive
+  // tabs. The active tab is re-rendered now; the others will refresh next
+  // time the user clicks them.
+  renderedFor.req = renderedFor.resp = renderedFor.raw = null;
+  renderActiveTab(cap);
+}
 
+function renderActiveTab(cap) {
+  const tab = activeTab();
+  if (renderedFor[tab] === cap.id) return;
+  TAB_RENDERERS[tab]?.(cap);
+  renderedFor[tab] = cap.id;
+}
+
+function renderDetailMeta(cap) {
   $('d-method').textContent = cap.request?.method || '';
   $('d-url').textContent = cap.request?.url || '';
   $('d-url').title = cap.request?.url || '';
@@ -737,15 +852,18 @@ function renderDetail(cap) {
     cap.fallback_of ? `· ⤴ fallback of ${cap.fallback_of}` : '',
     cap.fallback_to ? `· → fallback to ${cap.fallback_to}` : '',
   ].filter(Boolean).join(' ');
+}
 
+function renderReqTab(cap) {
   $('req-line').textContent = `${cap.request?.method || ''} ${cap.request?.url || ''}`;
   renderHeaders($('req-headers'), cap.request?.headers || {}, 'req');
   $('req-headers-count').textContent = `(${Object.keys(cap.request?.headers || {}).length})`;
   const reqBody = cap.request?.body || '';
   $('req-body-info').textContent = reqBody ? `(${fmtBytes(reqBody.length)})` : '(empty)';
-  // structured read-only view
   createBodyEditor('req-body-structured', reqBody, { readOnly: true });
+}
 
+function renderRespTab(cap) {
   $('resp-line').textContent = cap.response
     ? `${cap.response.status}${cap.response.streaming ? ' · streaming SSE' : ''}`
     : (cap.error ? 'ERROR: ' + cap.error : '(no response yet)');
@@ -758,18 +876,38 @@ function renderDetail(cap) {
   } else {
     $('resp-body').innerHTML = highlightJSON(tryPrettyJSON(respBody));
   }
-
-  $('raw-json').innerHTML = highlightJSON(JSON.stringify(cap, null, 2));
 }
 
-function appendStreamChunk(chunk) {
-  const cap = state.captures.get(state.selectedId);
-  if (!cap || !cap.response?.streaming) return;
-  if (document.querySelector('#tab-resp:not([hidden])')) {
+function renderRawTab(cap) {
+  // For huge captures, regex-highlighting MB of JSON blocks the main thread
+  // for seconds. Fall back to plain text past 1MB — still readable, but
+  // instant.
+  const HIGHLIGHT_MAX = 1024 * 1024;
+  const json = JSON.stringify(cap, null, 2);
+  if (json.length > HIGHLIGHT_MAX) {
+    $('raw-json').textContent = json;
+  } else {
+    $('raw-json').innerHTML = highlightJSON(json);
+  }
+}
+
+const TAB_RENDERERS = { req: renderReqTab, resp: renderRespTab, raw: renderRawTab };
+
+// Coalesce a burst of SSE chunks into one DOM update per 200ms. Each
+// chunk individually triggers a full rebuild + highlight + reflow, which
+// makes the UI jank during streaming.
+let streamRenderTimer = null;
+function appendStreamChunk(_chunk) {
+  if (streamRenderTimer) return;
+  streamRenderTimer = setTimeout(() => {
+    streamRenderTimer = null;
+    const cap = state.captures.get(state.selectedId);
+    if (!cap || !cap.response?.streaming) return;
+    if (!document.querySelector('#tab-resp:not([hidden])')) return;
     const respBody = (cap.response.chunks || []).map(c => c.data).join('');
     $('resp-body').innerHTML = highlightSSE(respBody);
     $('resp-body-info').textContent = `(${fmtBytes(respBody.length)}, SSE, ${cap.response.chunks.length} chunks)`;
-  }
+  }, 200);
 }
 
 // Headers we consider noise by default — SDK plumbing, transport metadata.
@@ -850,6 +988,8 @@ document.querySelectorAll('.tab').forEach(t => {
     const tab = t.dataset.tab;
     document.querySelectorAll('.tab-pane').forEach(p => p.hidden = true);
     $('tab-' + tab).hidden = false;
+    const cap = state.captures.get(state.selectedId);
+    if (cap) renderActiveTab(cap);
   });
 });
 
@@ -888,9 +1028,14 @@ $('rules-btn').addEventListener('click', openRulesModal);
 $('help-btn').addEventListener('click', () => { $('help-modal').hidden = false; });
 $('help-close').addEventListener('click', () => { $('help-modal').hidden = true; });
 $('empty-help').addEventListener('click', () => { $('help-modal').hidden = false; });
-$('replay-btn').addEventListener('click', () => {
-  const cap = state.captures.get(state.selectedId);
-  if (cap) openReplayModal(cap);
+$('replay-btn').addEventListener('click', async () => {
+  if (!state.selectedId) return;
+  try {
+    const cap = await ensureFullCapture(state.selectedId);
+    if (cap) openReplayModal(cap);
+  } catch (e) {
+    toast('Could not load capture: ' + e.message, 'error');
+  }
 });
 
 $('filter').addEventListener('input', (e) => {

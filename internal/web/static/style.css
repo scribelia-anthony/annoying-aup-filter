@@ -765,7 +765,10 @@ a { color: var(--accent); }
 .message-card[data-role="assistant"] .message-role { color: var(--accent); }
 .message-card[data-role="system"]    .message-role { color: var(--purple); }
 .message-summary { color: var(--fg-3); }
+.message-caret { color: var(--fg-3); width: 0.9em; display: inline-block; user-select: none; }
+.message-head:hover { background: var(--bg-2); }
 .message-actions { display: flex; gap: var(--sp-2); margin-left: auto; }
+.message-card .message-body[hidden] { display: none; }
 .message-body {
   padding: var(--sp-4) var(--sp-5);
   display: flex;
