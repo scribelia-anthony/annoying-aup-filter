@@ -15,7 +15,19 @@ func TestClassifyStreamPrefix(t *testing.T) {
 		{"empty", "", ""},
 		{"refusal", `event: message_delta
 data: {"type":"message_delta","delta":{"stop_reason":"refusal"}}`, "refusal"},
-		{"content_block_start", "event: content_block_start\ndata: {}", "passthrough"},
+		{"content_block_start text", `event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`, "passthrough"},
+		{"content_block_start tool_use", `event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"x","name":"y","input":{}}}`, "passthrough"},
+		{"content_block_start thinking only", `event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}`, ""},
+		{"thinking then refusal", `event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
+
+event: message_delta
+data: {"delta":{"stop_reason":"refusal"}}`, "refusal"},
+		{"text_delta", `event: content_block_delta
+data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}`, "passthrough"},
 		{"end_turn", `"stop_reason":"end_turn"`, "passthrough"},
 		{"tool_use", `"stop_reason":"tool_use"`, "passthrough"},
 		{"unknown", `event: ping`, ""},
