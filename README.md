@@ -93,8 +93,51 @@ and continue on the newest model from a clean slate.
 | `-ui-addr`       | `127.0.0.1:8888`              | where the UI + admin API listen        |
 | `-upstream`      | `https://api.anthropic.com`   | where requests are forwarded           |
 | `-max-captures`  | `1000`                        | ring-buffer size for in-memory history |
-| `-rules-file`    | (empty)                       | JSON file of rules to load at startup  |
+| `-rules-file`    | (empty)                       | JSON file of rules; also enables persistence (see below) |
 | `-version`       | —                             | print version info and exit            |
+
+## Persisting configuration
+
+By default **nothing is saved** — rules, the AUP-fallback toggle, and the
+intercept toggle live in memory and are lost on restart.
+
+Passing `-rules-file <path>` turns on persistence for the whole runtime
+config. The rules file is loaded at startup and rewritten whenever you change
+rules in the UI. Two sibling files are written next to it and restored on the
+next launch:
+
+| File             | Holds                                            |
+|------------------|--------------------------------------------------|
+| `<rules-file>`   | the match-and-replace rules (array)              |
+| `fallback.json`  | `{ "enabled": bool, "model": "..." }`            |
+| `intercept.json` | the intercept toggle                             |
+
+So to have a rule **and** the AUP fallback enabled on every start, either flip
+both in the UI once (they get written to disk), or pre-seed the files:
+
+```bash
+mkdir -p ~/.aup
+
+cat > ~/.aup/rules.json <<'JSON'
+[
+  {
+    "name": "example",
+    "enabled": true,
+    "phase": "request",
+    "target": "body",
+    "match": "foo",
+    "replacement": "bar"
+  }
+]
+JSON
+
+echo '{"enabled": true, "model": "claude-opus-4-6"}' > ~/.aup/fallback.json
+
+annoying-aup-filter -rules-file ~/.aup/rules.json
+```
+
+Startup then logs `[rules] loaded N rule(s)` and
+`[fallback] restored: enabled, model=claude-opus-4-6`.
 
 ## Admin REST API
 
