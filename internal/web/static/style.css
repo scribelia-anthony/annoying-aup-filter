@@ -1,5 +1,5 @@
 /* ============================================================
-   prompt-cleaner — component CSS
+   annoying-aup-filter — component CSS
    Tokens from colors_and_type.css (loaded first)
    ============================================================ */
 
@@ -8,6 +8,9 @@
   --mono: var(--font-mono);
   --sans: var(--font-sans);
 }
+
+/* display:flex on .detail / .empty overrides UA [hidden]=display:none */
+[hidden] { display: none !important; }
 
 html, body { height: 100%; }
 body {
@@ -314,7 +317,7 @@ a { color: var(--accent); }
   font-family: var(--font-mono);
   font-size: var(--fs-12);
 }
-.detail { display: flex; flex-direction: column; height: 100%; }
+.detail { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
 .detail-head {
   display: flex;
   align-items: center;

@@ -8,7 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/scribelia-anthony/prompt-cleaner/internal/persist"
+	"github.com/scribelia-anthony/annoying-aup-filter/internal/persist"
 )
 
 type Action string

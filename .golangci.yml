@@ -50,7 +50,7 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - github.com/scribelia-anthony/prompt-cleaner
+        - github.com/scribelia-anthony/annoying-aup-filter
 
 issues:
   max-issues-per-linter: 0

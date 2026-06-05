@@ -19,15 +19,15 @@ ARG DATE=unknown
 RUN CGO_ENABLED=0 go build \
       -trimpath \
       -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
-      -o /out/prompt-cleaner ./cmd/prompt-cleaner
+      -o /out/annoying-aup-filter ./cmd/annoying-aup-filter
 
 FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=build /out/prompt-cleaner /usr/local/bin/prompt-cleaner
+COPY --from=build /out/annoying-aup-filter /usr/local/bin/annoying-aup-filter
 
 # Bind the proxy to all interfaces inside the container; the UI stays
 # behind the explicit -ui-addr 0.0.0.0:8888 so it's reachable when the
 # port is published.
 EXPOSE 8080 8888
 USER nonroot:nonroot
-ENTRYPOINT ["/usr/local/bin/prompt-cleaner"]
+ENTRYPOINT ["/usr/local/bin/annoying-aup-filter"]
 CMD ["-proxy-addr", "0.0.0.0:8080", "-ui-addr", "0.0.0.0:8888"]

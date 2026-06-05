@@ -1,4 +1,4 @@
-module github.com/scribelia-anthony/prompt-cleaner
+module github.com/scribelia-anthony/annoying-aup-filter
 
 go 1.25
 

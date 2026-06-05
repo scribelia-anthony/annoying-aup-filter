@@ -1,15 +1,15 @@
 version: 2
 
-project_name: prompt-cleaner
+project_name: annoying-aup-filter
 
 before:
   hooks:
     - go mod tidy
 
 builds:
-  - id: prompt-cleaner
-    main: ./cmd/prompt-cleaner
-    binary: prompt-cleaner
+  - id: annoying-aup-filter
+    main: ./cmd/annoying-aup-filter
+    binary: annoying-aup-filter
     env:
       - CGO_ENABLED=0
     goos: [linux, darwin, windows]
@@ -59,8 +59,8 @@ changelog:
 
 dockers:
   - image_templates:
-      - "ghcr.io/scribelia-anthony/prompt-cleaner:{{ .Version }}-amd64"
-      - "ghcr.io/scribelia-anthony/prompt-cleaner:latest-amd64"
+      - "ghcr.io/scribelia-anthony/annoying-aup-filter:{{ .Version }}-amd64"
+      - "ghcr.io/scribelia-anthony/annoying-aup-filter:latest-amd64"
     use: buildx
     goos: linux
     goarch: amd64
@@ -68,13 +68,13 @@ dockers:
     build_flag_templates:
       - "--platform=linux/amd64"
       - "--label=org.opencontainers.image.title={{ .ProjectName }}"
-      - "--label=org.opencontainers.image.source=https://github.com/scribelia-anthony/prompt-cleaner"
+      - "--label=org.opencontainers.image.source=https://github.com/scribelia-anthony/annoying-aup-filter"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
       - "--label=org.opencontainers.image.licenses=MIT"
   - image_templates:
-      - "ghcr.io/scribelia-anthony/prompt-cleaner:{{ .Version }}-arm64"
-      - "ghcr.io/scribelia-anthony/prompt-cleaner:latest-arm64"
+      - "ghcr.io/scribelia-anthony/annoying-aup-filter:{{ .Version }}-arm64"
+      - "ghcr.io/scribelia-anthony/annoying-aup-filter:latest-arm64"
     use: buildx
     goos: linux
     goarch: arm64
@@ -82,24 +82,24 @@ dockers:
     build_flag_templates:
       - "--platform=linux/arm64"
       - "--label=org.opencontainers.image.title={{ .ProjectName }}"
-      - "--label=org.opencontainers.image.source=https://github.com/scribelia-anthony/prompt-cleaner"
+      - "--label=org.opencontainers.image.source=https://github.com/scribelia-anthony/annoying-aup-filter"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
       - "--label=org.opencontainers.image.licenses=MIT"
 
 docker_manifests:
-  - name_template: "ghcr.io/scribelia-anthony/prompt-cleaner:{{ .Version }}"
+  - name_template: "ghcr.io/scribelia-anthony/annoying-aup-filter:{{ .Version }}"
     image_templates:
-      - "ghcr.io/scribelia-anthony/prompt-cleaner:{{ .Version }}-amd64"
-      - "ghcr.io/scribelia-anthony/prompt-cleaner:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/scribelia-anthony/prompt-cleaner:latest"
+      - "ghcr.io/scribelia-anthony/annoying-aup-filter:{{ .Version }}-amd64"
+      - "ghcr.io/scribelia-anthony/annoying-aup-filter:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/scribelia-anthony/annoying-aup-filter:latest"
     image_templates:
-      - "ghcr.io/scribelia-anthony/prompt-cleaner:latest-amd64"
-      - "ghcr.io/scribelia-anthony/prompt-cleaner:latest-arm64"
+      - "ghcr.io/scribelia-anthony/annoying-aup-filter:latest-amd64"
+      - "ghcr.io/scribelia-anthony/annoying-aup-filter:latest-arm64"
 
 release:
   draft: false
   prerelease: auto
   github:
     owner: scribelia-anthony
-    name: prompt-cleaner
+    name: annoying-aup-filter

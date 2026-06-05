@@ -1,74 +1,90 @@
-# prompt-cleaner
+# annoying-aup-filter
 
-[![CI](https://github.com/scribelia-anthony/prompt-cleaner/actions/workflows/ci.yml/badge.svg)](https://github.com/scribelia-anthony/prompt-cleaner/actions/workflows/ci.yml)
-[![Release](https://github.com/scribelia-anthony/prompt-cleaner/actions/workflows/release.yml/badge.svg)](https://github.com/scribelia-anthony/prompt-cleaner/actions/workflows/release.yml)
-[![Go Reference](https://pkg.go.dev/badge/github.com/scribelia-anthony/prompt-cleaner.svg)](https://pkg.go.dev/github.com/scribelia-anthony/prompt-cleaner)
-[![Go Report Card](https://goreportcard.com/badge/github.com/scribelia-anthony/prompt-cleaner)](https://goreportcard.com/report/github.com/scribelia-anthony/prompt-cleaner)
+[![CI](https://github.com/scribelia-anthony/annoying-aup-filter/actions/workflows/ci.yml/badge.svg)](https://github.com/scribelia-anthony/annoying-aup-filter/actions/workflows/ci.yml)
+[![Release](https://github.com/scribelia-anthony/annoying-aup-filter/actions/workflows/release.yml/badge.svg)](https://github.com/scribelia-anthony/annoying-aup-filter/actions/workflows/release.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/scribelia-anthony/annoying-aup-filter.svg)](https://pkg.go.dev/github.com/scribelia-anthony/annoying-aup-filter)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A single-binary HTTP proxy + web UI that sits between Claude Code (or
-any Anthropic SDK) and `api.anthropic.com` — like a tiny Burp Suite,
-just for Claude.
+A single-binary HTTP proxy + web UI that sits between Claude Code (or any
+Anthropic SDK) and `api.anthropic.com`.
 
-Capture, inspect, modify, intercept, and replay every Claude API call.
+Claude sometimes refuses a request mid-task with an AUP refusal — stopping
+everything cold when you were almost done. This tool catches those early
+refusals and automatically retries the same request against a fallback model
+(Opus 4.8 by default), so Claude can finish what it started. You `/clear`
+context afterward and resume cleanly — no lost work.
 
-## Features
+Beyond the AUP fallback, it's a lightweight Burp Suite for Claude API calls:
+inspect streaming requests, intercept and edit before forwarding, replay,
+and apply regex match-and-replace rules on either side of the wire.
 
-- **Transparent proxy** — point `ANTHROPIC_BASE_URL` at it; forwards
-  everything to the real Anthropic API (or any upstream of your choice).
-- **Streaming-aware** — `text/event-stream` responses are forwarded
-  chunk by chunk while being captured for later inspection.
-- **Live web UI** — dark theme, no framework. Captures stream in via
-  Server-Sent Events; click a request to see headers and body with
-  JSON / SSE syntax highlighting.
-- **Intercept mode** — pause every request before it leaves the host.
-  Edit URL, headers, body, then forward (modified or unchanged) or drop.
-- **Match-and-replace rules** — regex rewrites applied automatically to
-  URL, headers, or body on either side of the wire.
-- **AUP-refusal fallback** — detect early SSE `stop_reason: "refusal"`
-  responses and transparently retry against a fallback model.
-- **Replay** — clone any captured request, edit, re-send.
+## Screenshot
 
-## Install
+![annoying-aup-filter UI](screenshot.png)
 
-### Binary release
-
-Download from the [releases page](https://github.com/scribelia-anthony/prompt-cleaner/releases),
-or via `go install`:
+## Quick start
 
 ```bash
-go install github.com/scribelia-anthony/prompt-cleaner/cmd/prompt-cleaner@latest
+go install github.com/scribelia-anthony/annoying-aup-filter/cmd/annoying-aup-filter@latest
+
+# In the shell where you launch Claude Code:
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8080
+annoying-aup-filter &
+claude
 ```
+
+Then open <http://127.0.0.1:8888> — every request and its streaming response
+appear live. Enable the **AUP → Opus** toggle in the UI to activate automatic
+fallback retries.
 
 ### Container
 
 ```bash
 docker run --rm -p 8080:8080 -p 8888:8888 \
-  ghcr.io/scribelia-anthony/prompt-cleaner:latest
+  ghcr.io/scribelia-anthony/annoying-aup-filter:latest
 ```
 
 ### From source
 
 ```bash
-git clone https://github.com/scribelia-anthony/prompt-cleaner.git
-cd prompt-cleaner
+git clone https://github.com/scribelia-anthony/annoying-aup-filter.git
+cd annoying-aup-filter
 make build
-./prompt-cleaner
+./annoying-aup-filter
 ```
 
 Go 1.25+ required.
 
-## Use it with Claude Code
+## How the AUP fallback works
 
-In the shell where you launch Claude Code:
+1. The proxy forwards your request to Anthropic and peeks at the beginning of
+   the SSE stream.
+2. If the very first response event is a refusal (`stop_reason: "refusal"`),
+   the proxy transparently re-sends the original request to the configured
+   fallback model.
+3. The client sees a seamless response from the fallback model — no error, no
+   interruption.
+4. If the fallback model also refuses, the second refusal is forwarded as-is.
 
-```bash
-export ANTHROPIC_BASE_URL=http://127.0.0.1:8080
-claude
-```
+This is **not a content filter bypass** in the sense of altering your prompts.
+It is a model-router: when one model refuses, try another. The goal is to avoid
+losing in-progress work because of an overly eager AUP classifier. Once the
+task completes, do `/clear` in Claude Code to reset context and pick up from
+there.
 
-Then open <http://127.0.0.1:8888> in your browser. Every request from
-Claude Code (and the streaming SSE response) appears live in the UI.
+## Features
+
+- **Transparent proxy** — point `ANTHROPIC_BASE_URL` at it; forwards
+  everything to the real Anthropic API (or any upstream of your choice).
+- **Streaming-aware** — `text/event-stream` responses are forwarded chunk by
+  chunk while being captured for inspection.
+- **Live web UI** — dark theme, no framework. Captures stream in via SSE;
+  click a request to see headers and body with JSON / SSE syntax highlighting.
+- **Intercept mode** — pause every request before it leaves the host. Edit
+  URL, headers, body, then forward (modified or unchanged) or drop.
+- **Match-and-replace rules** — regex rewrites applied automatically to URL,
+  headers, or body on either side of the wire.
+- **Replay** — clone any captured request, edit, re-send.
 
 ## Flags
 
@@ -83,7 +99,7 @@ Claude Code (and the streaming SSE response) appears live in the UI.
 
 ## Admin REST API
 
-The UI itself uses these; you can also script against them.
+The UI uses these; you can also script against them directly.
 
 | Method | Path                                    | Effect                                              |
 |--------|-----------------------------------------|-----------------------------------------------------|
@@ -119,36 +135,36 @@ The UI itself uses these; you can also script against them.
 ## Layout
 
 ```
-cmd/prompt-cleaner/   binary entry point (flags + boot)
-internal/api/         admin REST + SSE handler
-internal/fallback/    AUP-refusal fallback policy
-internal/id/          short id generator
-internal/intercept/   pause / forward / drop gate
-internal/proxy/       HTTP forwarder, streaming, fallback peek
-internal/rules/       regex match & replace engine
-internal/store/       in-memory ring buffer + event broadcaster
-internal/web/         embedded UI assets (HTML/CSS/JS)
+cmd/annoying-aup-filter/  binary entry point (flags + boot)
+internal/api/             admin REST + SSE handler
+internal/fallback/        AUP-refusal fallback policy
+internal/id/              short id generator
+internal/intercept/       pause / forward / drop gate
+internal/proxy/           HTTP forwarder, streaming, fallback peek
+internal/rules/           regex match & replace engine
+internal/store/           in-memory ring buffer + event broadcaster
+internal/web/             embedded UI assets (HTML/CSS/JS)
 ```
 
 ## Caveats
 
-- The proxy talks plain HTTP to clients (no TLS termination needed for
-  localhost). It uses HTTPS when forwarding upstream.
-- Request bodies and SSE events are stored in memory as strings. Fine
-  for the Anthropic Messages API; do not use for binary uploads.
-- Response-body rules in streaming mode run **per chunk**, so a regex
-  that spans a chunk boundary will miss.
+- The proxy talks plain HTTP to clients (no TLS termination). It uses HTTPS
+  forwarding upstream.
+- Request bodies and SSE events are stored in memory as strings. Fine for the
+  Anthropic Messages API; do not use for binary uploads.
+- Response-body rules in streaming mode run **per chunk**, so a regex that
+  spans a chunk boundary will miss.
 - Auth tokens (`x-api-key`, `Authorization`) are stored verbatim in the
-  capture log. Treat the UI port as sensitive — keep it bound to
-  `127.0.0.1`. See [SECURITY.md](SECURITY.md) for the threat model.
+  capture log. Keep the UI port bound to `127.0.0.1`. See
+  [SECURITY.md](SECURITY.md) for the full threat model.
 
 ## Development
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the dev loop.
 
 ```bash
-make help        # list all targets
-make ci          # tidy + vet + race tests
+make help   # list all targets
+make ci     # tidy + vet + race tests
 ```
 
 ## License

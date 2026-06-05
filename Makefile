@@ -1,8 +1,8 @@
 .DEFAULT_GOAL := help
 
-BIN        := prompt-cleaner
-PKG        := github.com/scribelia-anthony/prompt-cleaner
-CMD        := ./cmd/prompt-cleaner
+BIN        := annoying-aup-filter
+PKG        := github.com/scribelia-anthony/annoying-aup-filter
+CMD        := ./cmd/annoying-aup-filter
 VERSION    ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT     ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 DATE       ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
