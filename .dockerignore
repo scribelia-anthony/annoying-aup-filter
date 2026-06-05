@@ -8,7 +8,8 @@ rules.json
 rules.local.json
 coverage.out
 dist
-prompt-cleaner
+annoying-aup-filter
+screenshot.png
 README.md
 CHANGELOG.md
 CONTRIBUTING.md

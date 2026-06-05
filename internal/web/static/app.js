@@ -1,4 +1,4 @@
-/* prompt-cleaner UI */
+/* annoying-aup-filter UI */
 (() => {
 'use strict';
 
