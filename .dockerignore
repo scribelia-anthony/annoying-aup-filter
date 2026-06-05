@@ -9,10 +9,7 @@ rules.local.json
 coverage.out
 dist
 annoying-aup-filter
-screenshot.png
 README.md
 CHANGELOG.md
-CONTRIBUTING.md
-SECURITY.md
 LICENSE
 docs

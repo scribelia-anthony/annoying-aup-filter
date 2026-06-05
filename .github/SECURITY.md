@@ -3,11 +3,9 @@
 ## Reporting a Vulnerability
 
 If you find a security issue in annoying-aup-filter, **please do not open a
-public GitHub issue**. Instead, report it privately:
-
-- GitHub Security Advisories — use the **"Report a vulnerability"** button
-  under the repository's *Security* tab.
-- Email: `[redacted]` with subject `[annoying-aup-filter security]`.
+public GitHub issue**. Instead, report it privately via GitHub Security
+Advisories — use the **"Report a vulnerability"** button under the
+repository's *Security* tab.
 
 Please include:
 

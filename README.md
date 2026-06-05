@@ -1,18 +1,17 @@
 # annoying-aup-filter
 
 [![CI](https://github.com/scribelia-anthony/annoying-aup-filter/actions/workflows/ci.yml/badge.svg)](https://github.com/scribelia-anthony/annoying-aup-filter/actions/workflows/ci.yml)
-[![Release](https://github.com/scribelia-anthony/annoying-aup-filter/actions/workflows/release.yml/badge.svg)](https://github.com/scribelia-anthony/annoying-aup-filter/actions/workflows/release.yml)
-[![Go Reference](https://pkg.go.dev/badge/github.com/scribelia-anthony/annoying-aup-filter.svg)](https://pkg.go.dev/github.com/scribelia-anthony/annoying-aup-filter)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A single-binary HTTP proxy + web UI that sits between Claude Code (or any
 Anthropic SDK) and `api.anthropic.com`.
 
-Claude sometimes refuses a request mid-task with an AUP refusal — stopping
-everything cold when you were almost done. This tool catches those early
-refusals and automatically retries the same request against a fallback model
-(Opus 4.8 by default), so Claude can finish what it started. You `/clear`
-context afterward and resume cleanly — no lost work.
+Running Claude Code on the newest model (Opus 4.8) sometimes refuses a request
+mid-task with an AUP refusal — stopping everything cold when you were almost
+done. This tool catches those early refusals and transparently retries the
+**same request on an older model** (Opus 4.6 by default), which almost never
+trips the AUP classifier. Claude finishes what it started; you then `/clear`
+and resume on 4.8 with fresh context — no lost work.
 
 Beyond the AUP fallback, it's a lightweight Burp Suite for Claude API calls:
 inspect streaming requests, intercept and edit before forwarding, replay,
@@ -20,7 +19,7 @@ and apply regex match-and-replace rules on either side of the wire.
 
 ## Screenshot
 
-![annoying-aup-filter UI](screenshot.png)
+![annoying-aup-filter UI](.github/assets/screenshot.png)
 
 ## Quick start
 
@@ -30,7 +29,7 @@ go install github.com/scribelia-anthony/annoying-aup-filter/cmd/annoying-aup-fil
 # In the shell where you launch Claude Code:
 export ANTHROPIC_BASE_URL=http://127.0.0.1:8080
 annoying-aup-filter &
-claude
+claude --dangerously-skip-permissions
 ```
 
 Then open <http://127.0.0.1:8888> — every request and its streaming response
@@ -60,17 +59,17 @@ Go 1.25+ required.
 1. The proxy forwards your request to Anthropic and peeks at the beginning of
    the SSE stream.
 2. If the very first response event is a refusal (`stop_reason: "refusal"`),
-   the proxy transparently re-sends the original request to the configured
-   fallback model.
+   the proxy transparently re-sends the **same request** to the fallback model
+   (Opus 4.6 by default — an older model whose AUP classifier rarely fires).
 3. The client sees a seamless response from the fallback model — no error, no
-   interruption.
+   interruption — and the in-progress task keeps going.
 4. If the fallback model also refuses, the second refusal is forwarded as-is.
 
-This is **not a content filter bypass** in the sense of altering your prompts.
-It is a model-router: when one model refuses, try another. The goal is to avoid
-losing in-progress work because of an overly eager AUP classifier. Once the
-task completes, do `/clear` in Claude Code to reset context and pick up from
-there.
+This is **not a content-filter bypass** — your prompts are sent unchanged. It is
+a model-router: when the newest model refuses, retry on an older one that is
+less trigger-happy. The point is to not lose in-progress work to an overly eager
+classifier. Once the task completes, `/clear` in Claude Code to reset context
+and continue on the newest model from a clean slate.
 
 ## Features
 
@@ -156,11 +155,11 @@ internal/web/             embedded UI assets (HTML/CSS/JS)
   spans a chunk boundary will miss.
 - Auth tokens (`x-api-key`, `Authorization`) are stored verbatim in the
   capture log. Keep the UI port bound to `127.0.0.1`. See
-  [SECURITY.md](SECURITY.md) for the full threat model.
+  [SECURITY.md](.github/SECURITY.md) for the full threat model.
 
 ## Development
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the dev loop.
+See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for the dev loop.
 
 ```bash
 make help   # list all targets
