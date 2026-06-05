@@ -19,7 +19,7 @@ func WriteJSON(path string, v any) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, ".prompt-cleaner-*.tmp")
+	tmp, err := os.CreateTemp(dir, ".annoying-aup-filter-*.tmp")
 	if err != nil {
 		return err
 	}

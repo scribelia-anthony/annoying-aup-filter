@@ -21,14 +21,14 @@ labels: bug
 
 ### Environment
 
-- `prompt-cleaner -version`:
+- `annoying-aup-filter -version`:
 - OS / arch:
 - Go version (only if you built from source):
 - Client (Claude Code, raw SDK, curl, ...):
 
 ### Logs
 
-<!-- Paste relevant stderr from prompt-cleaner. Redact any tokens. -->
+<!-- Paste relevant stderr from annoying-aup-filter. Redact any tokens. -->
 
 ```
 ```

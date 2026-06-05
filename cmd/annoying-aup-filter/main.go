@@ -1,4 +1,4 @@
-// Command prompt-cleaner runs an HTTP proxy + admin web UI that sits
+// Command annoying-aup-filter runs an HTTP proxy + admin web UI that sits
 // between Claude Code (or any Anthropic SDK) and api.anthropic.com.
 // Captures every request and streaming response, supports match-and-
 // replace rules, intercept/forward, replay, and AUP-refusal fallback.
@@ -18,13 +18,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/scribelia-anthony/prompt-cleaner/internal/api"
-	"github.com/scribelia-anthony/prompt-cleaner/internal/fallback"
-	"github.com/scribelia-anthony/prompt-cleaner/internal/intercept"
-	"github.com/scribelia-anthony/prompt-cleaner/internal/proxy"
-	"github.com/scribelia-anthony/prompt-cleaner/internal/rules"
-	"github.com/scribelia-anthony/prompt-cleaner/internal/store"
-	"github.com/scribelia-anthony/prompt-cleaner/internal/web"
+	"github.com/scribelia-anthony/annoying-aup-filter/internal/api"
+	"github.com/scribelia-anthony/annoying-aup-filter/internal/fallback"
+	"github.com/scribelia-anthony/annoying-aup-filter/internal/intercept"
+	"github.com/scribelia-anthony/annoying-aup-filter/internal/proxy"
+	"github.com/scribelia-anthony/annoying-aup-filter/internal/rules"
+	"github.com/scribelia-anthony/annoying-aup-filter/internal/store"
+	"github.com/scribelia-anthony/annoying-aup-filter/internal/web"
 )
 
 // Set at link time by goreleaser. Reads VCS info from debug.BuildInfo
@@ -165,5 +165,5 @@ func versionString() string {
 	if d == "" {
 		d = "unknown"
 	}
-	return fmt.Sprintf("prompt-cleaner %s (commit %s, built %s)", v, c, d)
+	return fmt.Sprintf("annoying-aup-filter %s (commit %s, built %s)", v, c, d)
 }

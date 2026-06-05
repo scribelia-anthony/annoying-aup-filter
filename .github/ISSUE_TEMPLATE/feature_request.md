@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest something prompt-cleaner could do
+about: Suggest something annoying-aup-filter could do
 labels: enhancement
 ---
 

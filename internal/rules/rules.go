@@ -12,8 +12,8 @@ import (
 	"regexp"
 	"sync"
 
-	"github.com/scribelia-anthony/prompt-cleaner/internal/id"
-	"github.com/scribelia-anthony/prompt-cleaner/internal/persist"
+	"github.com/scribelia-anthony/annoying-aup-filter/internal/id"
+	"github.com/scribelia-anthony/annoying-aup-filter/internal/persist"
 )
 
 type Phase string

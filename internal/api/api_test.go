@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scribelia-anthony/prompt-cleaner/internal/fallback"
-	"github.com/scribelia-anthony/prompt-cleaner/internal/intercept"
-	"github.com/scribelia-anthony/prompt-cleaner/internal/proxy"
-	"github.com/scribelia-anthony/prompt-cleaner/internal/rules"
-	"github.com/scribelia-anthony/prompt-cleaner/internal/store"
+	"github.com/scribelia-anthony/annoying-aup-filter/internal/fallback"
+	"github.com/scribelia-anthony/annoying-aup-filter/internal/intercept"
+	"github.com/scribelia-anthony/annoying-aup-filter/internal/proxy"
+	"github.com/scribelia-anthony/annoying-aup-filter/internal/rules"
+	"github.com/scribelia-anthony/annoying-aup-filter/internal/store"
 )
 
 func newTestAPI(t *testing.T) (*API, *store.Store) {

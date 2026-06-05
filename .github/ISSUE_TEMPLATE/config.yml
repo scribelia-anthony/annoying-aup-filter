@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security report
-    url: https://github.com/scribelia-anthony/prompt-cleaner/security/advisories/new
+    url: https://github.com/scribelia-anthony/annoying-aup-filter/security/advisories/new
     about: Please report security vulnerabilities privately, not as a public issue.
