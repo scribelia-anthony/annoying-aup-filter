@@ -101,24 +101,15 @@ and continue on the newest model from a clean slate.
 By default **nothing is saved** — rules, the AUP-fallback toggle, and the
 intercept toggle live in memory and are lost on restart.
 
-Passing `-rules-file <path>` turns on persistence for the whole runtime
-config. The rules file is loaded at startup and rewritten whenever you change
-rules in the UI. Two sibling files are written next to it and restored on the
-next launch:
+### Auto-discovered config (no flag required)
 
-| File             | Holds                                            |
-|------------------|--------------------------------------------------|
-| `<rules-file>`   | the match-and-replace rules (array)              |
-| `fallback.json`  | `{ "enabled": bool, "model": "..." }`            |
-| `intercept.json` | the intercept toggle                             |
-
-So to have a rule **and** the AUP fallback enabled on every start, either flip
-both in the UI once (they get written to disk), or pre-seed the files:
+If `~/.config/annoying-aup-filter/rules.json` exists (respects `$XDG_CONFIG_HOME`),
+it is loaded automatically on every start with no flag needed:
 
 ```bash
-mkdir -p ~/.aup
+mkdir -p ~/.config/annoying-aup-filter
 
-cat > ~/.aup/rules.json <<'JSON'
+cat > ~/.config/annoying-aup-filter/rules.json <<'JSON'
 [
   {
     "name": "example",
@@ -131,12 +122,27 @@ cat > ~/.aup/rules.json <<'JSON'
 ]
 JSON
 
-echo '{"enabled": true, "model": "claude-opus-4-6"}' > ~/.aup/fallback.json
+# Optional: enable AUP fallback from the start
+echo '{"enabled": true, "model": "claude-opus-4-6"}' \
+  > ~/.config/annoying-aup-filter/fallback.json
 
-annoying-aup-filter -rules-file ~/.aup/rules.json
+annoying-aup-filter   # no extra flags
 ```
 
-Startup then logs `[rules] loaded N rule(s)` and
+### Custom path
+
+Pass `-rules-file <path>` to use a different location. Persistence works the
+same way — the file is loaded at startup and rewritten whenever you change rules
+in the UI. Two sibling files are written next to it and restored on the next
+launch:
+
+| File             | Holds                                            |
+|------------------|--------------------------------------------------|
+| `<rules-file>`   | the match-and-replace rules (array)              |
+| `fallback.json`  | `{ "enabled": bool, "model": "..." }`            |
+| `intercept.json` | the intercept toggle                             |
+
+Startup logs `[rules] loaded N rule(s)` and (when fallback is on)
 `[fallback] restored: enabled, model=claude-opus-4-6`.
 
 ## Admin REST API

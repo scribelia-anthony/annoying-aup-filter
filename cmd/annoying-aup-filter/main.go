@@ -54,6 +54,12 @@ func main() {
 	in := intercept.New()
 	fb := fallback.New()
 
+	if *rulesFile == "" {
+		if p := defaultConfigPath(); p != "" {
+			rulesFile = &p
+		}
+	}
+
 	if *rulesFile != "" {
 		if data, err := os.ReadFile(*rulesFile); err == nil {
 			var loaded []*rules.Rule
@@ -139,6 +145,24 @@ func main() {
 	defer cancel()
 	_ = proxySrv.Shutdown(ctx)
 	_ = uiSrv.Shutdown(ctx)
+}
+
+// defaultConfigPath returns the auto-discovered rules file path if it exists,
+// or "" when no config directory is found.
+func defaultConfigPath() string {
+	configDir := os.Getenv("XDG_CONFIG_HOME")
+	if configDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		configDir = filepath.Join(home, ".config")
+	}
+	p := filepath.Join(configDir, "annoying-aup-filter", "rules.json")
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	return ""
 }
 
 func versionString() string {
