@@ -1,6 +1,8 @@
 # annoying-aup-filter
 
 [![CI](https://github.com/scribelia-anthony/annoying-aup-filter/actions/workflows/ci.yml/badge.svg)](https://github.com/scribelia-anthony/annoying-aup-filter/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/scribelia-anthony/annoying-aup-filter)](https://github.com/scribelia-anthony/annoying-aup-filter/releases)
+[![Go Reference](https://pkg.go.dev/badge/github.com/scribelia-anthony/annoying-aup-filter.svg)](https://pkg.go.dev/github.com/scribelia-anthony/annoying-aup-filter)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A single-binary HTTP proxy + web UI that sits between Claude Code (or any
